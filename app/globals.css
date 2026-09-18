@@ -1,0 +1,88 @@
+@import "tailwindcss";
+
+/*
+ * DESIGN SYSTEM: the single place for colors, type, spacing and shape.
+ * Components use the utilities these tokens create (bg-brand, text-ink,
+ * text-title, py-section, rounded-card, ...) and never hard-code values.
+ *
+ * PER-SALON BRAND COLOR
+ * Per salon only these runtime variables change: --brand, --brand-foreground
+ * (text on top of the brand color) and --brand-ink (brand color as text on
+ * white). Everything brand-related is derived from them. lib/brand.ts computes
+ * all three from salons.brand_color:
+ *
+ *   <div style={brandStyle(salon.brand_color)}>
+ *
+ * The values below are the platform's own brand (the marketing site).
+ */
+:root {
+  --brand: #c2410c;
+  --brand-foreground: #ffffff;
+}
+
+/* Tokens that reference runtime variables must be `inline`. */
+@theme inline {
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-strong: color-mix(in oklab, var(--brand), black 18%);
+  /* Brand color as text on light backgrounds. Salon pages set --brand-ink to a
+     contrast-checked value (lib/brand.ts); without it, a darkened --brand. */
+  --color-brand-ink: var(--brand-ink, color-mix(in oklab, var(--brand), black 25%));
+  --color-brand-soft: color-mix(in oklab, var(--brand), white 92%);
+  --color-brand-line: color-mix(in oklab, var(--brand), white 78%);
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+@theme {
+  /* ---- colors: neutrals and states ---- */
+  --color-canvas: #faf8f5; /* page background */
+  --color-surface: #ffffff; /* cards */
+  --color-ink: #1c1917; /* main text */
+  --color-ink-muted: #57534e; /* secondary text */
+  --color-line: #e7e2db; /* borders and dividers */
+  --color-success: #15803d;
+  --color-danger: #b91c1c;
+  --color-warning: #b45309;
+
+  /* ---- typography (each size sets its own line height and tracking) ---- */
+  --text-display: clamp(2.25rem, 1.5rem + 3.6vw, 4rem);
+  --text-display--line-height: 1.05;
+  --text-display--letter-spacing: -0.035em;
+  --text-title: clamp(1.75rem, 1.35rem + 1.8vw, 2.5rem);
+  --text-title--line-height: 1.15;
+  --text-title--letter-spacing: -0.025em;
+  --text-lead: 1.125rem;
+  --text-lead--line-height: 1.6;
+
+  /* ---- spacing ---- */
+  --spacing-gutter: 1.25rem; /* page side padding: 20px at 375px */
+  --spacing-section: clamp(3.5rem, 2.5rem + 5vw, 6.5rem); /* vertical rhythm between sections */
+  --container-page: 72rem; /* max-w-page */
+
+  /* ---- shape ---- */
+  --radius-control: 0.75rem; /* buttons, inputs */
+  --radius-card: 1.25rem;
+  --shadow-card: 0 1px 2px rgb(28 25 23 / 0.04), 0 12px 32px -8px rgb(28 25 23 / 0.12);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
+
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 3px;
+}
