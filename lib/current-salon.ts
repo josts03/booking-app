@@ -1,6 +1,6 @@
 /**
  * The salon for the current request, from the x-salon-slug header that
- * middleware.ts sets. Cached per request, so layout, page and server action
+ * proxy.ts sets. Cached per request, so layout, page and server action
  * share one lookup. Data comes from lib/data.ts only.
  */
 import { cache } from "react";

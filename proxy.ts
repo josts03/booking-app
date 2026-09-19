@@ -5,21 +5,27 @@
  *   frizerstvo-test.domena.si -> "frizerstvo-test"
  *   test.localhost:3000       -> "test"
  *   localhost:3000, domena.si, www.domena.si -> "test" (no subdomain, default)
+ *   booking-app.vercel.app    -> "test" (platform host, see PLATFORM_SUFFIXES)
  *
  * With a subdomain, "/" is rewritten to the salon's booking page (/rezervacija).
  *
- * Set ROOT_DOMAIN (e.g. "domena.si") in production. Without it, any host with
- * three or more labels is assumed to have the subdomain in front, which is
- * wrong for hosts like "my-app.vercel.app".
- *
- * NOTE: Next.js 16 renamed this file convention to proxy.ts (same code, the
- * exported function is called `proxy`). middleware.ts still works but is
- * deprecated.
+ * Set ROOT_DOMAIN (e.g. "domena.si") in production, so only real salon
+ * subdomains are recognised. Without it we fall back to a heuristic that reads
+ * the front labels of any host with three or more of them as the subdomain,
+ * which is why PLATFORM_SUFFIXES has to carve out the hosting platform itself.
  */
 import { NextResponse, type NextRequest } from "next/server";
 
 const DEFAULT_SLUG = "test";
 const SLUG_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+
+/**
+ * The hosting platform's own domains. The label in front of these is the
+ * deployment name ("booking-app", "booking-app-git-main-jost"), never a salon,
+ * so they count as having no subdomain. Without this the heuristic below reads
+ * the deployment name as a slug, finds no such salon, and every page 404s.
+ */
+const PLATFORM_SUFFIXES = [".vercel.app", ".vercel.sh"];
 
 function getSubdomain(host: string): string | null {
   const hostname = host.split(":")[0].toLowerCase();
@@ -31,6 +37,8 @@ function getSubdomain(host: string): string | null {
     subdomain = hostname.slice(0, -(rootDomain.length + 1));
   } else if (hostname.endsWith(".localhost")) {
     subdomain = hostname.slice(0, -".localhost".length);
+  } else if (PLATFORM_SUFFIXES.some((suffix) => hostname.endsWith(suffix))) {
+    return null;
   } else {
     const labels = hostname.split(".");
     if (labels.length < 3) return null;
@@ -41,7 +49,7 @@ function getSubdomain(host: string): string | null {
   return subdomain;
 }
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const subdomain = getSubdomain(request.headers.get("host") ?? "");
   const slug = subdomain ?? DEFAULT_SLUG;
 

@@ -70,7 +70,7 @@ lib/
   analytics.ts    čista funkcija za analitiko
   format.ts       slovenski zapisi (cene, datumi, trajanje)
   brand.ts        barva salona v CSS spremenljivke
-middleware.ts     poddomena -> glava x-salon-slug
+proxy.ts          poddomena -> glava x-salon-slug
 ```
 
 Barve, tipografija in razmiki so na enem mestu: `app/globals.css`. Vsak salon
