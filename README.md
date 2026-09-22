@@ -7,6 +7,10 @@ salon ima svojo poddomeno (`salon.domena.si`), javno stran za naročanje in admi
 Prijave v `/admin` še ni, zato **projekta ne objavljaj na javni naslov**, dokler
 prijava ni narejena.
 
+Zasloni in pisalne poti so narejeni; manjka le baza. Pot do faze 2:
+požene se `specs/schema.sql` v Supabase, nato se zamenjajo telesa funkcij v
+`lib/data.ts` (podpisi in tipi ostanejo enaki) in se vklopi `signIn()`.
+
 ## Sklad
 
 Next.js 16 (App Router), TypeScript, Tailwind CSS 4, date-fns in date-fns-tz.
@@ -38,9 +42,11 @@ ustvari globalne tipe (`PageProps`, `LayoutProps`).
 | Pot | Kaj je |
 |---|---|
 | `/` | prodajna stran platforme |
+| `/registracija` | ustvarjanje novega salona (izbira poddomene) |
+| `/prijava` | prijava lastnika (zaslon je narejen, prijave še ni) |
 | `/rezervacija` | javna stran za naročanje (4 koraki) |
 | `/rezervacija/potrditev/[token]` | potrditev termina |
-| `/admin` | admin: koledar, storitve, zaposleni, stranke, analitika |
+| `/admin` | admin: koledar, storitve, zaposleni, stranke, analitika, nastavitve |
 
 Salon se izbere po poddomeni: `test.localhost:3000` je salon s slugom `test`.
 Brez poddomene (`localhost:3000`) se uporabi `test`. Na poddomeni salona je
@@ -70,6 +76,8 @@ lib/
   analytics.ts    čista funkcija za analitiko
   format.ts       slovenski zapisi (cene, datumi, trajanje)
   brand.ts        barva salona v CSS spremenljivke
+specs/
+  schema.sql      SQL shema: tabele, omejitve, RLS. types.ts je 1:1 z njo.
 proxy.ts          poddomena -> glava x-salon-slug
 ```
 

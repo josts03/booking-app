@@ -29,6 +29,11 @@ const items = [
     label: "Analitika",
     icon: "M4 20V10m6 10V4m6 16v-7m4 7H2",
   },
+  {
+    href: "/admin/nastavitve",
+    label: "Nastavitve",
+    icon: "M21 4h-7M10 4H3m18 8h-9M8 12H3m18 8h-5m-4 0H3M14 2v4M8 10v4M16 18v4",
+  },
 ];
 
 /**
@@ -40,11 +45,11 @@ export function AdminNav({ variant }: { variant: "bottom" | "side" }) {
 
   const list =
     variant === "bottom"
-      ? "grid grid-cols-5"
+      ? "grid grid-cols-6"
       : "flex flex-col gap-1";
   const item =
     variant === "bottom"
-      ? "flex min-h-14 flex-col items-center justify-center gap-0.5 text-[11px] font-medium"
+      ? "flex min-h-14 flex-col items-center justify-center gap-0.5 px-0.5 text-center text-[10px] leading-tight font-medium"
       : "flex min-h-11 items-center gap-3 rounded-control px-3 text-sm font-medium";
 
   return (

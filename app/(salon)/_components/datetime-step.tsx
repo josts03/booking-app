@@ -59,7 +59,7 @@ export async function DateTimeStep({ salon, service, staff, monthParam, dayParam
     (date) => format(date, "yyyy-MM-dd"),
   );
 
-  // Free slots for every bookable day of this month (fake engine for now).
+  // Free slots for every bookable day of this month (engine: lib/slots.ts).
   const bookableDays = daysOfMonth.filter((day) => day >= today && day <= lastBookable);
   const slotsByDay = new Map(
     await Promise.all(

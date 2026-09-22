@@ -10,6 +10,7 @@ import {
   formatWeekdayDate,
 } from "@/lib/format";
 import { buttonSecondary } from "../../../_components/ui";
+import { CancelForm } from "./cancel-form";
 
 // The URL contains the cancel token: keep it out of search engines.
 export const metadata: Metadata = {
@@ -61,7 +62,9 @@ export default async function ConfirmationPage({
       <div className="text-center">
         <span
           aria-hidden="true"
-          className="mx-auto flex size-14 items-center justify-center rounded-full bg-brand text-brand-foreground"
+          className={`mx-auto flex size-14 items-center justify-center rounded-full ${
+            cancelled ? "bg-line text-ink-muted" : "bg-brand text-brand-foreground"
+          }`}
         >
           <svg
             viewBox="0 0 24 24"
@@ -72,7 +75,7 @@ export default async function ConfirmationPage({
             strokeLinecap="round"
             strokeLinejoin="round"
           >
-            <path d="m5 12.5 4.5 4.5L19 7.5" />
+            <path d={cancelled ? "M6 6 18 18M18 6 6 18" : "m5 12.5 4.5 4.5L19 7.5"} />
           </svg>
         </span>
         <h1 className="mt-4 text-title font-bold">{title}</h1>
@@ -94,8 +97,9 @@ export default async function ConfirmationPage({
         <p className="font-medium text-ink">{salon.name}</p>
         {salon.address && <p>{salon.address}</p>}
         <p className="mt-3">
-          Termin lahko brezplačno odpoveste ali prestavite do {salon.cancel_window_hours} ur pred
-          začetkom.
+          {cancelled
+            ? "Za nov termin izberite spodaj."
+            : `Termin lahko brezplačno odpoveste ali prestavite do ${salon.cancel_window_hours} ur pred začetkom.`}
           {salon.phone && (
             <>
               {" "}
@@ -108,6 +112,10 @@ export default async function ConfirmationPage({
           )}
         </p>
       </div>
+
+      {!cancelled && (
+        <CancelForm token={booking.cancel_token} windowHours={salon.cancel_window_hours} />
+      )}
 
       <Link href="/rezervacija" className={`${buttonSecondary} w-full`}>
         Nova rezervacija
