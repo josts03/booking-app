@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { getSignedInStaff, NOT_SIGNED_IN } from "@/lib/auth";
 import { getCurrentSalon } from "@/lib/current-salon";
 import { createService, updateService } from "@/lib/data";
 
@@ -20,7 +21,7 @@ function text(formData: FormData, key: string): string {
 
 /**
  * Creates (no `id`) or updates a service of the current salon.
- * TODO: admin login check, Zod validation (weeks 6-7).
+ * TODO: Zod validation (week 7).
  */
 export async function saveService(
   _previous: ServiceFormState,
@@ -52,6 +53,12 @@ export async function saveService(
   if (!(priceCents >= 0 && priceCents <= 1_000_000)) errors.price = "Npr. 32 ali 32,50.";
 
   if (Object.keys(errors).length > 0) return { errors, values };
+
+  // Checked here too. proxy.ts and the admin layout already turn strangers away,
+  // but a server action is its own endpoint and can be posted to directly, so it
+  // must not rely on a page having run first.
+  const staff = await getSignedInStaff();
+  if (!staff) return { message: NOT_SIGNED_IN, values };
 
   const salon = await getCurrentSalon();
   if (!salon) return { message: "Salona ni mogoče najti.", values };

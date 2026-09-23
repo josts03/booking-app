@@ -12,6 +12,7 @@ import type { Booking } from "@/lib/types";
 import { calendarHref } from "../../_components/calendar-url";
 import { StatusBadge } from "../../_components/status-badge";
 import { backLink, card, pageTitle } from "../../_components/ui";
+import { CustomerForm } from "./customer-form";
 
 export default async function CustomerPage({ params }: PageProps<"/admin/stranke/[id]">) {
   const { id } = await params;
@@ -108,12 +109,6 @@ export default async function CustomerPage({ params }: PageProps<"/admin/stranke
             <span className="break-all font-medium text-brand-ink underline">{customer.email}</span>
           </a>
         )}
-        {customer.notes && (
-          <div className="px-4 py-3">
-            <p className="text-sm text-ink-muted">Interna opomba</p>
-            <p className="mt-0.5">{customer.notes}</p>
-          </div>
-        )}
       </div>
 
       <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -124,6 +119,8 @@ export default async function CustomerPage({ params }: PageProps<"/admin/stranke
           </div>
         ))}
       </dl>
+
+      <CustomerForm customer={customer} />
 
       {upcoming.length > 0 && (
         <section>

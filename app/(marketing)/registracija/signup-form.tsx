@@ -71,8 +71,12 @@ export function SignupForm({ rootDomain }: { rootDomain: string }) {
           {host}
         </a>
         <p className="mt-5 rounded-control bg-warning/10 p-3 text-sm text-warning">
-          Faza 1: baze še ni, zato salon obstaja samo do ponovnega zagona
-          strežnika. Ko bo baza priklopljena, bo vpis trajen.
+          Salon je shranjen, prijave za urejanje pa še ne nastavimo samodejno.
+          Pišite nam na{" "}
+          <a href="mailto:podpora@example.com" className="font-medium underline">
+            podpora@example.com
+          </a>{" "}
+          in vam jo vklopimo.
         </p>
       </div>
     );

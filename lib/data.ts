@@ -1,15 +1,23 @@
 /**
  * The ONLY file through which the app reads or writes data.
  *
- * Right now it serves fake data from ./mock. Later the body of each function
- * is replaced with Supabase calls; signatures and types stay the same, and
- * nothing outside this file may import ./mock.
+ * Everything here talks to Supabase. Which client a function uses is the thing
+ * to get right, and each one says why it picked its own (see lib/supabase.ts):
  *
- * Every function is async because the Supabase versions will be.
+ *   supabaseServer()  the signed-in user, under row level security. The default
+ *                     for reads and for every admin write, so a salon can only
+ *                     ever touch its own rows.
+ *   supabaseAdmin()   service role, bypassing RLS. Only where the visitor has
+ *                     no account at all: signing up, booking, cancelling by
+ *                     token, and reading busy times for the public calendar.
+ *
+ * A read refused by RLS comes back EMPTY rather than as an error, so failed()
+ * logs anything that is a genuine fault and the two can be told apart.
  */
 import { addDays, addMinutes, parseISO } from "date-fns";
-import { formatInTimeZone } from "date-fns-tz";
-import { mock, toPeriod } from "./mock";
+import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
+import { canChangeTo } from "./booking-status";
+import { isSupabaseConfigured, supabaseAdmin, supabaseServer } from "./supabase";
 import { freeSlots, type StaffAvailability } from "./slots";
 import type {
   Booking,
@@ -42,23 +50,33 @@ import type {
   StaffService,
   TimeOff,
   TimeOffInput,
+  Timestamptz,
   Uuid,
 } from "./types";
 
-/** The mock hands out copies, like a database would, so callers cannot mutate it. */
-function copy<T>(value: T): T {
-  return structuredClone(value);
-}
-
-function bySortOrder<T extends { sort_order: number }>(a: T, b: T): number {
-  return a.sort_order - b.sort_order;
+/**
+ * Postgres errors must never pass unnoticed. Row level security is different:
+ * it refuses by returning NO ROWS rather than an error, so an empty list can
+ * mean "nothing there" or "not allowed to see it" — the logs are the only place
+ * that tells the two apart while lib/data.ts is being moved onto Supabase.
+ */
+function failed(where: string, error: { message: string; code?: string } | null): boolean {
+  if (!error) return false;
+  console.error(`[data.ts ${where}] ${error.code ?? ""} ${error.message}`.trim());
+  return true;
 }
 
 // ---------- reads ----------
 
 export async function getSalon(slug: string): Promise<Salon | null> {
-  const found = mock.salons.find((salon) => salon.slug === slug);
-  return found ? copy(found) : null;
+  const supabase = await supabaseServer();
+  const { data, error } = await supabase
+    .from("salons")
+    .select("*")
+    .eq("slug", slug)
+    .maybeSingle();
+  if (failed("getSalon", error)) return null;
+  return (data as Salon | null) ?? null;
 }
 
 /** Active services only, unless `includeInactive` (admin screens). */
@@ -66,12 +84,13 @@ export async function getServices(
   salonId: Uuid,
   options: { includeInactive?: boolean } = {},
 ): Promise<Service[]> {
-  return copy(
-    mock.services
-      .filter((s) => s.salon_id === salonId)
-      .filter((s) => options.includeInactive || s.is_active)
-      .sort(bySortOrder),
-  );
+  const supabase = await supabaseServer();
+  let query = supabase.from("services").select("*").eq("salon_id", salonId);
+  if (!options.includeInactive) query = query.eq("is_active", true);
+
+  const { data, error } = await query.order("sort_order");
+  if (failed("getServices", error)) return [];
+  return (data ?? []) as Service[];
 }
 
 /**
@@ -82,19 +101,30 @@ export async function getStaff(
   salonId: Uuid,
   options: { includeInactive?: boolean; serviceId?: Uuid } = {},
 ): Promise<Staff[]> {
-  return copy(
-    mock.staff
-      .filter((s) => s.salon_id === salonId)
-      .filter((s) => options.includeInactive || s.is_active)
-      .filter(
-        (s) =>
-          options.serviceId === undefined ||
-          mock.staffServices.some(
-            (l) => l.staff_id === s.id && l.service_id === options.serviceId,
-          ),
-      )
-      .sort(bySortOrder),
-  );
+  const supabase = await supabaseServer();
+
+  // Who performs the service, looked up first. Two small queries beat one
+  // embedded join here: `staff_services` reaches `staff` through a composite
+  // foreign key, which PostgREST cannot always resolve on its own.
+  let allowed: Uuid[] | null = null;
+  if (options.serviceId !== undefined) {
+    const { data, error } = await supabase
+      .from("staff_services")
+      .select("staff_id")
+      .eq("salon_id", salonId)
+      .eq("service_id", options.serviceId);
+    if (failed("getStaff/links", error)) return [];
+    allowed = (data ?? []).map((row) => row.staff_id as Uuid);
+    if (allowed.length === 0) return [];
+  }
+
+  let query = supabase.from("staff").select("*").eq("salon_id", salonId);
+  if (!options.includeInactive) query = query.eq("is_active", true);
+  if (allowed) query = query.in("id", allowed);
+
+  const { data, error } = await query.order("sort_order");
+  if (failed("getStaff", error)) return [];
+  return (data ?? []) as Staff[];
 }
 
 /**
@@ -106,15 +136,16 @@ export async function getBookings(
   from: Date,
   to: Date,
 ): Promise<Booking[]> {
-  return copy(
-    mock.bookings
-      .filter((b) => b.salon_id === salonId)
-      .filter((b) => {
-        const start = parseISO(b.starts_at);
-        return start >= from && start < to;
-      })
-      .sort((a, b) => a.starts_at.localeCompare(b.starts_at)),
-  );
+  const supabase = await supabaseServer();
+  const { data, error } = await supabase
+    .from("bookings")
+    .select("*")
+    .eq("salon_id", salonId)
+    .gte("starts_at", from.toISOString())
+    .lt("starts_at", to.toISOString())
+    .order("starts_at");
+  if (failed("getBookings", error)) return [];
+  return (data ?? []) as Booking[];
 }
 
 /**
@@ -122,8 +153,16 @@ export async function getBookings(
  * The caller must still check that booking.salon_id is the current salon.
  */
 export async function getBookingByCancelToken(token: string): Promise<Booking | null> {
-  const found = mock.bookings.find((b) => b.cancel_token === token);
-  return found ? copy(found) : null;
+  // Service role: the visitor holding this link has no account, and `bookings`
+  // has no public policy. The token is the whole credential, so it is compared
+  // in full and the caller still checks the salon.
+  const { data, error } = await supabaseAdmin()
+    .from("bookings")
+    .select("*")
+    .eq("cancel_token", token)
+    .maybeSingle();
+  if (failed("getBookingByCancelToken", error)) return null;
+  return (data as Booking | null) ?? null;
 }
 
 // ---------- admin reads ----------
@@ -131,32 +170,63 @@ export async function getBookingByCancelToken(token: string): Promise<Booking | 
 // through the logged-in user (RLS) or the server-only service_role client.
 
 export async function getStaffHours(salonId: Uuid): Promise<StaffHours[]> {
-  return copy(mock.staffHours.filter((h) => h.salon_id === salonId));
+  const supabase = await supabaseServer();
+  const { data, error } = await supabase
+    .from("staff_hours")
+    .select("*")
+    .eq("salon_id", salonId);
+  if (failed("getStaffHours", error)) return [];
+  return (data ?? []) as StaffHours[];
 }
 
 export async function getStaffServices(salonId: Uuid): Promise<StaffService[]> {
-  return copy(mock.staffServices.filter((l) => l.salon_id === salonId));
+  const supabase = await supabaseServer();
+  const { data, error } = await supabase
+    .from("staff_services")
+    .select("*")
+    .eq("salon_id", salonId);
+  if (failed("getStaffServices", error)) return [];
+  return (data ?? []) as StaffService[];
 }
 
 /** Time off that overlaps [from, to). staff_id null means the whole salon. */
 export async function getTimeOff(salonId: Uuid, from: Date, to: Date): Promise<TimeOff[]> {
-  return copy(
-    mock.timeOff
-      .filter((t) => t.salon_id === salonId)
-      .filter((t) => parseISO(t.starts_at) < to && parseISO(t.ends_at) > from)
-      .sort((a, b) => a.starts_at.localeCompare(b.starts_at)),
-  );
+  const supabase = await supabaseServer();
+  // Overlaps [from, to): it starts before the window ends and ends after it begins.
+  const { data, error } = await supabase
+    .from("time_off")
+    .select("*")
+    .eq("salon_id", salonId)
+    .lt("starts_at", to.toISOString())
+    .gt("ends_at", from.toISOString())
+    .order("starts_at");
+  if (failed("getTimeOff", error)) return [];
+  return (data ?? []) as TimeOff[];
 }
 
 /** One booking of this salon by id (admin only; visitors use the cancel_token). */
 export async function getBooking(salonId: Uuid, bookingId: Uuid): Promise<Booking | null> {
-  const found = mock.bookings.find((b) => b.id === bookingId && b.salon_id === salonId);
-  return found ? copy(found) : null;
+  const supabase = await supabaseServer();
+  const { data, error } = await supabase
+    .from("bookings")
+    .select("*")
+    .eq("id", bookingId)
+    .eq("salon_id", salonId)
+    .maybeSingle();
+  if (failed("getBooking", error)) return null;
+  return (data as Booking | null) ?? null;
 }
 
 export async function getCustomer(salonId: Uuid, customerId: Uuid): Promise<Customer | null> {
-  const found = mock.customers.find((c) => c.id === customerId && c.salon_id === salonId);
-  return found ? copy(found) : null;
+  const supabase = await supabaseServer();
+  const { data, error } = await supabase
+    .from("customers")
+    .select("*")
+    .eq("id", customerId)
+    .eq("salon_id", salonId)
+    .maybeSingle();
+  if (failed("getCustomer", error)) return null;
+  return (data as Customer | null) ?? null;
 }
 
 /** Lower case and without diacritics, so "kovacic" finds "Kovačič". */
@@ -172,9 +242,20 @@ export async function getCustomers(
   salonId: Uuid,
   options: { query?: string } = {},
 ): Promise<CustomerSummary[]> {
+  const supabase = await supabaseServer();
+
+  // The whole list comes back and is filtered here rather than in SQL, because
+  // the search has to ignore Slovenian diacritics ("Zajc" must find "Žajc") and
+  // Postgres would need the unaccent extension for that. Fine for the hundreds
+  // of customers a salon has; past a few thousand this belongs in the database.
+  const { data, error } = await supabase
+    .from("customers")
+    .select("*")
+    .eq("salon_id", salonId);
+  if (failed("getCustomers", error)) return [];
+
   const query = fold(options.query?.trim() ?? "");
   const queryDigits = query.replace(/\D/g, "");
-  const now = new Date();
 
   const matches = (c: Customer): boolean => {
     if (!query) return true;
@@ -183,18 +264,37 @@ export async function getCustomers(
     return queryDigits.length >= 3 && (c.phone ?? "").replace(/\D/g, "").includes(queryDigits);
   };
 
-  return mock.customers
-    .filter((c) => c.salon_id === salonId && matches(c))
+  const customers = ((data ?? []) as Customer[]).filter(matches);
+  if (customers.length === 0) return [];
+
+  // One more query for the visit numbers of exactly these customers.
+  const ids = customers.map((c) => c.id);
+  const visits = await supabase
+    .from("bookings")
+    .select("customer_id, starts_at, status")
+    .eq("salon_id", salonId)
+    .in("customer_id", ids)
+    .neq("status", "cancelled");
+  if (failed("getCustomers/bookings", visits.error)) return [];
+
+  type Visit = { customer_id: Uuid; starts_at: Timestamptz; status: BookingStatus };
+  const byCustomer = new Map<Uuid, Visit[]>();
+  for (const visit of (visits.data ?? []) as Visit[]) {
+    const list = byCustomer.get(visit.customer_id);
+    if (list) list.push(visit);
+    else byCustomer.set(visit.customer_id, [visit]);
+  }
+
+  const now = new Date();
+  return customers
     .map((customer) => {
-      const own = mock.bookings.filter(
-        (b) => b.customer_id === customer.id && b.status !== "cancelled",
-      );
+      const own = byCustomer.get(customer.id) ?? [];
       const past = own.filter((b) => parseISO(b.starts_at) <= now);
       const upcoming = own.filter(
         (b) => parseISO(b.starts_at) > now && (b.status === "pending" || b.status === "confirmed"),
       );
       return {
-        customer: copy(customer),
+        customer,
         bookings_count: own.length,
         last_visit_at: past.map((b) => b.starts_at).sort().at(-1) ?? null,
         next_visit_at: upcoming.map((b) => b.starts_at).sort()[0] ?? null,
@@ -213,11 +313,15 @@ export async function getCustomerBookings(
   salonId: Uuid,
   customerId: Uuid,
 ): Promise<Booking[]> {
-  return copy(
-    mock.bookings
-      .filter((b) => b.salon_id === salonId && b.customer_id === customerId)
-      .sort((a, b) => b.starts_at.localeCompare(a.starts_at)),
-  );
+  const supabase = await supabaseServer();
+  const { data, error } = await supabase
+    .from("bookings")
+    .select("*")
+    .eq("salon_id", salonId)
+    .eq("customer_id", customerId)
+    .order("starts_at", { ascending: false });
+  if (failed("getCustomerBookings", error)) return [];
+  return (data ?? []) as Booking[];
 }
 
 // ---------- admin writes: services ----------
@@ -243,20 +347,37 @@ export async function createService(
   input: ServiceInput,
 ): Promise<SaveServiceResult> {
   if (!validService(input)) return { ok: false, error: SERVICE_INVALID };
-  const service: Service = {
-    id: crypto.randomUUID(),
-    salon_id: salonId,
-    name: input.name.trim(),
-    description: null,
-    category: input.category?.trim() || null,
-    duration_min: input.duration_min,
-    buffer_after_min: input.buffer_after_min,
-    price_cents: input.price_cents,
-    is_active: input.is_active,
-    sort_order: Math.max(0, ...mock.services.map((s) => s.sort_order)) + 1,
-  };
-  mock.services.push(service);
-  return { ok: true, service: copy(service) };
+  const supabase = await supabaseServer();
+
+  // New services go at the end of the salon's own list.
+  const last = await supabase
+    .from("services")
+    .select("sort_order")
+    .eq("salon_id", salonId)
+    .order("sort_order", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const { data, error } = await supabase
+    .from("services")
+    .insert({
+      salon_id: salonId,
+      name: input.name.trim(),
+      category: input.category?.trim() || null,
+      duration_min: input.duration_min,
+      buffer_after_min: input.buffer_after_min,
+      price_cents: input.price_cents,
+      is_active: input.is_active,
+      sort_order: ((last.data?.sort_order as number | undefined) ?? 0) + 1,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    failed("createService", error);
+    return { ok: false, error: SERVICE_INVALID };
+  }
+  return { ok: true, service: data as Service };
 }
 
 /**
@@ -268,92 +389,200 @@ export async function updateService(
   serviceId: Uuid,
   input: ServiceInput,
 ): Promise<SaveServiceResult> {
-  const service = mock.services.find((s) => s.id === serviceId && s.salon_id === salonId);
-  if (!service || !validService(input)) return { ok: false, error: SERVICE_INVALID };
-  Object.assign(service, {
-    name: input.name.trim(),
-    category: input.category?.trim() || null,
-    duration_min: input.duration_min,
-    buffer_after_min: input.buffer_after_min,
-    price_cents: input.price_cents,
-    is_active: input.is_active,
-  });
-  return { ok: true, service: copy(service) };
+  if (!validService(input)) return { ok: false, error: SERVICE_INVALID };
+  const supabase = await supabaseServer();
+
+  const { data, error } = await supabase
+    .from("services")
+    .update({
+      name: input.name.trim(),
+      category: input.category?.trim() || null,
+      duration_min: input.duration_min,
+      buffer_after_min: input.buffer_after_min,
+      price_cents: input.price_cents,
+      is_active: input.is_active,
+    })
+    .eq("id", serviceId)
+    .eq("salon_id", salonId)
+    .select()
+    .maybeSingle();
+
+  if (error) {
+    failed("updateService", error);
+    return { ok: false, error: SERVICE_INVALID };
+  }
+  // No row came back: either it is gone, or RLS refused it. Same answer either way.
+  if (!data) return { ok: false, error: SERVICE_INVALID };
+  return { ok: true, service: data as Service };
 }
 
 // ---------- free slots ----------
 
-/** Staff who may do this service: one chosen member, or everyone who performs it. */
-function candidateStaff(salonId: Uuid, serviceId: Uuid, staffId: Uuid | null): Staff[] {
-  return mock.staff
-    .filter((s) => s.salon_id === salonId && s.is_active)
-    .filter((s) => staffId === null || s.id === staffId)
-    .filter((s) =>
-      mock.staffServices.some(
-        (l) => l.staff_id === s.id && l.service_id === serviceId && l.salon_id === salonId,
-      ),
-    )
-    .sort(bySortOrder);
-}
+/** Longest cleanup buffer the schema allows, used to widen lookups. */
+const MAX_BUFFER_MIN = 240;
 
-/** Everything lib/slots.ts needs about one member, taken straight from the rows. */
-function availability(salonId: Uuid, staffId: Uuid): StaffAvailability {
+/** Only the columns the slot engine needs; no customer data ever comes along. */
+type BusyBooking = Pick<Booking, "starts_at" | "ends_at" | "buffer_min" | "status"> & {
+  staff_id: Uuid;
+};
+
+/**
+ * Everything lib/slots.ts needs, fetched ONCE for a whole range of days.
+ *
+ * This shape exists because of a trap: the month view asks about every bookable
+ * day, and one query per day would be ~90 round trips for a single page load.
+ * Five queries cover the whole month instead, and the engine then runs in memory.
+ *
+ * Bookings are read with the SERVICE ROLE client. `bookings` deliberately has
+ * no public policy, yet a visitor must still be told which times are taken. It
+ * is safe here because nothing about a booking leaves this module: the callers
+ * only ever receive FreeSlot, which carries a staff id and two timestamps.
+ * A tighter version later would be a SECURITY DEFINER function returning just
+ * the busy intervals.
+ */
+async function loadAvailability(
+  salonId: Uuid,
+  serviceId: Uuid,
+  staffId: Uuid | null,
+  windowStart: Date,
+  windowEnd: Date,
+): Promise<{ salon: Salon; service: Service; staff: StaffAvailability[] } | null> {
+  const supabase = await supabaseServer();
+
+  const [salonResult, serviceResult] = await Promise.all([
+    supabase.from("salons").select("*").eq("id", salonId).maybeSingle(),
+    supabase
+      .from("services")
+      .select("*")
+      .eq("id", serviceId)
+      .eq("salon_id", salonId)
+      .eq("is_active", true)
+      .maybeSingle(),
+  ]);
+  if (failed("loadAvailability/salon", salonResult.error)) return null;
+  if (failed("loadAvailability/service", serviceResult.error)) return null;
+
+  const salon = salonResult.data as Salon | null;
+  const service = serviceResult.data as Service | null;
+  if (!salon || !service) return null;
+
+  const staff = await getStaff(salonId, { serviceId });
+  const candidates = staffId ? staff.filter((member) => member.id === staffId) : staff;
+  if (candidates.length === 0) return null;
+
+  const ids = candidates.map((member) => member.id);
+  // A booking that ended before the window can still block it through its
+  // cleanup buffer, so look back by the longest buffer the schema permits.
+  const lookback = addMinutes(windowStart, -MAX_BUFFER_MIN).toISOString();
+
+  const [hoursResult, offResult, bookingsResult] = await Promise.all([
+    supabase.from("staff_hours").select("*").eq("salon_id", salonId).in("staff_id", ids),
+    supabase
+      .from("time_off")
+      .select("*")
+      .eq("salon_id", salonId)
+      .lt("starts_at", windowEnd.toISOString())
+      .gt("ends_at", windowStart.toISOString()),
+    supabaseAdmin()
+      .from("bookings")
+      .select("staff_id, starts_at, ends_at, buffer_min, status")
+      .eq("salon_id", salonId)
+      .in("staff_id", ids)
+      .neq("status", "cancelled")
+      .lt("starts_at", windowEnd.toISOString())
+      .gt("ends_at", lookback),
+  ]);
+  if (failed("loadAvailability/hours", hoursResult.error)) return null;
+  if (failed("loadAvailability/timeOff", offResult.error)) return null;
+  if (failed("loadAvailability/bookings", bookingsResult.error)) return null;
+
+  const hours = (hoursResult.data ?? []) as StaffHours[];
+  const timeOff = (offResult.data ?? []) as TimeOff[];
+  const bookings = (bookingsResult.data ?? []) as unknown as BusyBooking[];
+
   return {
-    staff_id: staffId,
-    hours: mock.staffHours.filter((h) => h.salon_id === salonId && h.staff_id === staffId),
-    timeOff: mock.timeOff.filter(
-      (t) => t.salon_id === salonId && (t.staff_id === null || t.staff_id === staffId),
-    ),
-    bookings: mock.bookings.filter((b) => b.salon_id === salonId && b.staff_id === staffId),
+    salon,
+    service,
+    staff: candidates.map((member) => ({
+      staff_id: member.id,
+      hours: hours.filter((h) => h.staff_id === member.id),
+      // staff_id null closes the whole salon, so it applies to everyone.
+      timeOff: timeOff.filter((t) => t.staff_id === null || t.staff_id === member.id),
+      bookings: bookings.filter((b) => b.staff_id === member.id),
+    })),
   };
 }
 
+/** The instant a local calendar day begins in the salon's timezone. */
+function dayStart(day: string, timezone: string): Date {
+  return fromZonedTime(`${day}T00:00:00`, timezone);
+}
+
 /**
- * Bookable start times for one service on one local day.
+ * Bookable start times for several local days at once, keyed by day.
  *
- * This function only gathers rows — every rule lives in lib/slots.ts. With
- * Supabase the three lookups above become queries and nothing else changes.
+ * Use this whenever more than one day is needed — the month picker especially.
+ * Every rule still lives in lib/slots.ts; this only gathers rows.
  */
+export async function getFreeSlotsByDay(query: {
+  salon_id: Uuid;
+  service_id: Uuid;
+  staff_id: Uuid | null;
+  days: string[];
+}): Promise<Map<string, FreeSlot[]>> {
+  const empty = new Map(query.days.map((day) => [day, [] as FreeSlot[]]));
+
+  const days = [...query.days].filter((day) => /^\d{4}-\d{2}-\d{2}$/.test(day)).sort();
+  if (days.length === 0) return empty;
+
+  const supabase = await supabaseServer();
+  const { data: salonRow, error } = await supabase
+    .from("salons")
+    .select("timezone")
+    .eq("id", query.salon_id)
+    .maybeSingle();
+  if (failed("getFreeSlotsByDay/timezone", error) || !salonRow) return empty;
+
+  const timezone = (salonRow as { timezone: string }).timezone;
+  const windowStart = dayStart(days[0], timezone);
+  // Exclusive end: midnight after the last day asked about.
+  const windowEnd = addMinutes(dayStart(days[days.length - 1], timezone), 60 * 24);
+
+  const loaded = await loadAvailability(
+    query.salon_id,
+    query.service_id,
+    query.staff_id,
+    windowStart,
+    windowEnd,
+    );
+  if (!loaded) return empty;
+
+  const now = new Date();
+  const result = new Map<string, FreeSlot[]>();
+  for (const day of query.days) {
+    result.set(
+      day,
+      freeSlots({
+        salon: loaded.salon,
+        service: loaded.service,
+        day,
+        staff: loaded.staff,
+        now,
+      }),
+    );
+  }
+  return result;
+}
+
+/** Bookable start times for one local day. */
 export async function getFreeSlots(query: FreeSlotsQuery): Promise<FreeSlot[]> {
-  const salon = mock.salons.find((s) => s.id === query.salon_id);
-  const service = mock.services.find(
-    (s) => s.id === query.service_id && s.salon_id === query.salon_id && s.is_active,
-  );
-  if (!salon || !service) return [];
-
-  return freeSlots({
-    salon,
-    service,
-    day: query.day,
-    staff: candidateStaff(salon.id, service.id, query.staff_id).map((member) =>
-      availability(salon.id, member.id),
-    ),
-    now: new Date(),
+  const byDay = await getFreeSlotsByDay({
+    salon_id: query.salon_id,
+    service_id: query.service_id,
+    staff_id: query.staff_id,
+    days: [query.day],
   });
-}
-
-interface Interval {
-  from: Date;
-  to: Date;
-}
-
-function overlaps(a: Interval, b: Interval): boolean {
-  return a.from < b.to && b.from < a.to;
-}
-
-/** Time a staff member cannot take new bookings: bookings (with buffer) and time off. */
-function blockedIntervals(salonId: Uuid, staffId: Uuid): Interval[] {
-  const booked = mock.bookings
-    .filter((b) => b.salon_id === salonId && b.staff_id === staffId)
-    .filter((b) => b.status === "pending" || b.status === "confirmed")
-    .map((b) => ({
-      from: parseISO(b.starts_at),
-      to: addMinutes(parseISO(b.ends_at), b.buffer_min),
-    }));
-  const away = mock.timeOff
-    .filter((t) => t.salon_id === salonId && (t.staff_id === null || t.staff_id === staffId))
-    .map((t) => ({ from: parseISO(t.starts_at), to: parseISO(t.ends_at) }));
-  return [...booked, ...away];
+  return byDay.get(query.day) ?? [];
 }
 
 // ---------- writes ----------
@@ -376,31 +605,45 @@ const MESSAGES = {
  * Input validation (Zod) is added with the real server action.
  */
 export async function createBooking(input: NewBooking): Promise<CreateBookingResult> {
-  const salon = mock.salons.find((s) => s.id === input.salon_id);
-  const service = mock.services.find(
-    (s) => s.id === input.service_id && s.salon_id === input.salon_id && s.is_active,
-  );
-  const member = mock.staff.find(
-    (s) => s.id === input.staff_id && s.salon_id === input.salon_id && s.is_active,
-  );
-  const performs = mock.staffServices.some(
-    (l) =>
-      l.staff_id === input.staff_id &&
-      l.service_id === input.service_id &&
-      l.salon_id === input.salon_id,
-  );
+  const db = supabaseAdmin();
+
+  // Salon, service and staff are re-read from the database: the browser only
+  // said WHICH ones, never what they cost or how long they take.
+  const [salonRow, serviceRow, staffRow, linkRow] = await Promise.all([
+    db.from("salons").select("*").eq("id", input.salon_id).maybeSingle(),
+    db
+      .from("services")
+      .select("*")
+      .eq("id", input.service_id)
+      .eq("salon_id", input.salon_id)
+      .eq("is_active", true)
+      .maybeSingle(),
+    db
+      .from("staff")
+      .select("*")
+      .eq("id", input.staff_id)
+      .eq("salon_id", input.salon_id)
+      .eq("is_active", true)
+      .maybeSingle(),
+    db
+      .from("staff_services")
+      .select("staff_id")
+      .eq("staff_id", input.staff_id)
+      .eq("service_id", input.service_id)
+      .eq("salon_id", input.salon_id)
+      .maybeSingle(),
+  ]);
+
+  const salon = salonRow.data as Salon | null;
+  const service = serviceRow.data as Service | null;
+  const member = staffRow.data as Staff | null;
   const start = new Date(input.starts_at);
-  if (!salon || !service || !member || !performs || Number.isNaN(start.getTime())) {
+
+  if (!salon || !service || !member || !linkRow.data || Number.isNaN(start.getTime())) {
     return { ok: false, error: MESSAGES.invalid };
   }
 
-  const end = addMinutes(start, service.duration_min);
-  const wanted = { from: start, to: addMinutes(end, service.buffer_after_min) };
-
-  if (blockedIntervals(salon.id, member.id).some((b) => overlaps(wanted, b))) {
-    return { ok: false, error: MESSAGES.taken };
-  }
-
+  // Was this start time actually on offer? Catches stale tabs and hand-typed URLs.
   const day = formatInTimeZone(start, salon.timezone, "yyyy-MM-dd");
   const offered = await getFreeSlots({
     salon_id: salon.id,
@@ -408,57 +651,90 @@ export async function createBooking(input: NewBooking): Promise<CreateBookingRes
     staff_id: member.id,
     day,
   });
-  const stillFree = offered.some(
-    (slot) => new Date(slot.starts_at).getTime() === start.getTime(),
-  );
-  if (!stillFree) {
+  if (!offered.some((slot) => new Date(slot.starts_at).getTime() === start.getTime())) {
     return { ok: false, error: MESSAGES.unavailable };
   }
 
-  const now = new Date().toISOString();
-
-  let customer = mock.customers.find(
-    (c) => c.salon_id === salon.id && c.phone === input.phone,
-  );
-  if (!customer) {
-    const created: Customer = {
-      id: crypto.randomUUID(),
-      salon_id: salon.id,
-      first_name: input.first_name,
-      last_name: input.last_name ?? null,
-      phone: input.phone,
-      email: input.email,
-      notes: null,
-      marketing_consent: input.marketing_consent,
-      anonymized_at: null,
-      created_at: now,
-    };
-    mock.customers.push(created);
-    customer = created;
+  // A returning customer is recognised by phone number within this salon.
+  const phone = input.phone.trim();
+  const existing = await db
+    .from("customers")
+    .select("*")
+    .eq("salon_id", salon.id)
+    .eq("phone", phone)
+    .is("anonymized_at", null)
+    .maybeSingle();
+  if (failed("createBooking/customer", existing.error)) {
+    return { ok: false, error: MESSAGES.invalid };
   }
 
-  const booking: Booking = {
-    id: crypto.randomUUID(),
-    salon_id: salon.id,
-    staff_id: member.id,
-    service_id: service.id,
-    customer_id: customer.id,
-    starts_at: start.toISOString(),
-    ends_at: end.toISOString(),
-    buffer_min: service.buffer_after_min,
-    status: salon.require_confirmation ? "pending" : "confirmed",
-    price_cents: service.price_cents,
-    customer_note: input.customer_note ?? null,
-    internal_note: null,
-    source: input.source ?? "online",
-    cancel_token: crypto.randomUUID(),
-    created_at: now,
-    updated_at: now,
-    period: toPeriod(start, wanted.to),
-  };
-  mock.bookings.push(booking);
+  let customer = existing.data as Customer | null;
+  if (!customer) {
+    const created = await db
+      .from("customers")
+      .insert({
+        salon_id: salon.id,
+        first_name: input.first_name,
+        last_name: input.last_name ?? null,
+        phone,
+        email: input.email,
+        marketing_consent: input.marketing_consent,
+      })
+      .select()
+      .single();
 
-  return { ok: true, booking: copy(booking) };
+    if (created.error) {
+      // 23505: someone with this number was inserted a moment ago. Take theirs.
+      if (created.error.code !== "23505") {
+        failed("createBooking/newCustomer", created.error);
+        return { ok: false, error: MESSAGES.invalid };
+      }
+      const retry = await db
+        .from("customers")
+        .select("*")
+        .eq("salon_id", salon.id)
+        .eq("phone", phone)
+        .is("anonymized_at", null)
+        .maybeSingle();
+      customer = retry.data as Customer | null;
+      if (!customer) return { ok: false, error: MESSAGES.invalid };
+    } else {
+      customer = created.data as Customer;
+    }
+  }
+
+  // Price, end time, buffer and status all come from the database, never from
+  // the form. `period` is left out: the bookings_period trigger fills it.
+  const booked = await db
+    .from("bookings")
+    .insert({
+      salon_id: salon.id,
+      staff_id: member.id,
+      service_id: service.id,
+      customer_id: customer.id,
+      starts_at: start.toISOString(),
+      ends_at: addMinutes(start, service.duration_min).toISOString(),
+      buffer_min: service.buffer_after_min,
+      status: salon.require_confirmation ? "pending" : "confirmed",
+      price_cents: service.price_cents,
+      customer_note: input.customer_note ?? null,
+      source: input.source ?? "online",
+    })
+    .select()
+    .single();
+
+  if (booked.error) {
+    // 23P01: the bookings_no_overlap exclusion constraint. Someone took this
+    // exact slot between the check above and this insert — the database is the
+    // only place that can settle that race, and it just did.
+    if (booked.error.code === "23P01") {
+      return { ok: false, error: MESSAGES.taken };
+    }
+    failed("createBooking/insert", booked.error);
+    return { ok: false, error: MESSAGES.invalid };
+  }
+
+  return { ok: true, booking: booked.data as Booking };
 }
 
 // ---------- signup: new salon ----------
@@ -483,7 +759,18 @@ export async function isSlugAvailable(slug: string): Promise<boolean> {
   const wanted = slug.trim().toLowerCase();
   if (wanted.length < 3 || wanted.length > 40) return false;
   if (!SLUG_RULE.test(wanted) || RESERVED_SLUGS.has(wanted)) return false;
-  return !mock.salons.some((salon) => salon.slug === wanted);
+
+  // Service role on purpose: the public policy only shows salons that are on
+  // trial or active, so a suspended salon's address would look free here and
+  // the insert would then fail on the unique constraint with a message nobody
+  // can act on. Taken is taken, whatever state that salon is in.
+  const { data, error } = await supabaseAdmin()
+    .from("salons")
+    .select("id")
+    .eq("slug", wanted)
+    .maybeSingle();
+  if (failed("isSlugAvailable", error)) return false;
+  return data === null;
 }
 
 /** Defaults a new salon starts with. In Postgres these are column DEFAULTs. */
@@ -535,26 +822,56 @@ export async function createSalon(input: SignupInput): Promise<SignupResult> {
   }
 
   const timezone = validTimezone(input.timezone) ? input.timezone! : "Europe/Ljubljana";
-  const now = new Date();
 
-  const salon: Salon = {
-    id: crypto.randomUUID(),
-    slug,
-    custom_domain: null,
+  // Service role: whoever is signing up has no account yet, and `salons` has no
+  // policy that would let an anonymous caller insert one.
+  const db = supabaseAdmin();
+  const { data, error } = await db
+    .from("salons")
+    .insert({
+      slug,
+      name,
+      phone,
+      email,
+      timezone,
+      ...SALON_DEFAULTS,
+      subscription_status: "trial",
+      trial_ends_at: addDays(new Date(), TRIAL_DAYS).toISOString(),
+    })
+    .select()
+    .single();
+
+  if (error) {
+    // 23505: someone took the address between the check and this insert.
+    if (error.code === "23505") {
+      return { ok: false, error: "Ta naslov je že zaseden. Izberite drugega.", field: "slug" };
+    }
+    failed("createSalon", error);
+    return { ok: false, error: "Salona ni mogoče ustvariti. Poskusite znova." };
+  }
+
+  const salon = data as Salon;
+
+  // The owner has to exist in the calendar, or the salon has nobody to book
+  // with. Two statements rather than one transaction: if this second one fails
+  // the salon is removed again, so a half-built salon does not survive. A
+  // SECURITY DEFINER function doing both at once would be tidier.
+  const owner = await db.from("staff").insert({
+    salon_id: salon.id,
     name,
-    phone,
     email,
-    address: null,
-    timezone,
-    logo_url: null,
-    brand_color: null,
-    ...SALON_DEFAULTS,
-    subscription_status: "trial",
-    trial_ends_at: addDays(now, TRIAL_DAYS).toISOString(),
-    created_at: now.toISOString(),
-  };
-  mock.salons.push(salon);
-  return { ok: true, salon: copy(salon) };
+    phone,
+    is_active: true,
+    sort_order: 1,
+  });
+
+  if (owner.error) {
+    failed("createSalon/owner", owner.error);
+    await db.from("salons").delete().eq("id", salon.id);
+    return { ok: false, error: "Salona ni mogoče ustvariti. Poskusite znova." };
+  }
+
+  return { ok: true, salon };
 }
 
 // ---------- admin writes: salon settings ----------
@@ -591,9 +908,6 @@ export async function updateSalon(
   salonId: Uuid,
   input: SalonInput,
 ): Promise<SaveSalonResult> {
-  const salon = mock.salons.find((s) => s.id === salonId);
-  if (!salon) return { ok: false, error: SALON_INVALID };
-
   const name = input.name.trim();
   if (name.length < 2 || name.length > 80) {
     return { ok: false, error: "Ime salona mora imeti od 2 do 80 znakov." };
@@ -617,22 +931,34 @@ export async function updateSalon(
     }
   }
 
-  Object.assign(salon, {
-    name,
-    phone: input.phone?.trim() || null,
-    email,
-    address: input.address?.trim() || null,
-    timezone: input.timezone,
-    logo_url: input.logo_url?.trim() || null,
-    brand_color: color,
-    slot_interval_min: input.slot_interval_min,
-    min_lead_time_min: input.min_lead_time_min,
-    max_days_ahead: input.max_days_ahead,
-    cancel_window_hours: input.cancel_window_hours,
-    require_confirmation: input.require_confirmation,
-    reminder_hours_before: input.reminder_hours_before,
-  });
-  return { ok: true, salon: copy(salon) };
+  const supabase = await supabaseServer();
+  const { data, error } = await supabase
+    .from("salons")
+    .update({
+      name,
+      phone: input.phone?.trim() || null,
+      email,
+      address: input.address?.trim() || null,
+      timezone: input.timezone,
+      logo_url: input.logo_url?.trim() || null,
+      brand_color: color,
+      slot_interval_min: input.slot_interval_min,
+      min_lead_time_min: input.min_lead_time_min,
+      max_days_ahead: input.max_days_ahead,
+      cancel_window_hours: input.cancel_window_hours,
+      require_confirmation: input.require_confirmation,
+      reminder_hours_before: input.reminder_hours_before,
+    })
+    .eq("id", salonId)
+    .select()
+    .maybeSingle();
+
+  if (error) {
+    failed("updateSalon", error);
+    return { ok: false, error: SALON_INVALID };
+  }
+  if (!data) return { ok: false, error: SALON_INVALID };
+  return { ok: true, salon: data as Salon };
 }
 
 // ---------- admin writes: staff ----------
@@ -655,20 +981,35 @@ export async function createStaff(
   input: StaffInput,
 ): Promise<SaveStaffResult> {
   if (!validStaff(input)) return { ok: false, error: STAFF_INVALID };
-  const member: Staff = {
-    id: crypto.randomUUID(),
-    salon_id: salonId,
-    user_id: null,
-    name: input.name.trim(),
-    email: input.email?.trim().toLowerCase() || null,
-    phone: input.phone?.trim() || null,
-    color: input.color?.trim() || null,
-    is_active: input.is_active,
-    sort_order:
-      Math.max(0, ...mock.staff.filter((s) => s.salon_id === salonId).map((s) => s.sort_order)) + 1,
-  };
-  mock.staff.push(member);
-  return { ok: true, staff: copy(member) };
+  const supabase = await supabaseServer();
+
+  const last = await supabase
+    .from("staff")
+    .select("sort_order")
+    .eq("salon_id", salonId)
+    .order("sort_order", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const { data, error } = await supabase
+    .from("staff")
+    .insert({
+      salon_id: salonId,
+      name: input.name.trim(),
+      email: input.email?.trim().toLowerCase() || null,
+      phone: input.phone?.trim() || null,
+      color: input.color?.trim() || null,
+      is_active: input.is_active,
+      sort_order: ((last.data?.sort_order as number | undefined) ?? 0) + 1,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    failed("createStaff", error);
+    return { ok: false, error: STAFF_INVALID };
+  }
+  return { ok: true, staff: data as Staff };
 }
 
 /**
@@ -680,16 +1021,29 @@ export async function updateStaff(
   staffId: Uuid,
   input: StaffInput,
 ): Promise<SaveStaffResult> {
-  const member = mock.staff.find((s) => s.id === staffId && s.salon_id === salonId);
-  if (!member || !validStaff(input)) return { ok: false, error: STAFF_INVALID };
-  Object.assign(member, {
-    name: input.name.trim(),
-    email: input.email?.trim().toLowerCase() || null,
-    phone: input.phone?.trim() || null,
-    color: input.color?.trim() || null,
-    is_active: input.is_active,
-  });
-  return { ok: true, staff: copy(member) };
+  if (!validStaff(input)) return { ok: false, error: STAFF_INVALID };
+  const supabase = await supabaseServer();
+
+  const { data, error } = await supabase
+    .from("staff")
+    .update({
+      name: input.name.trim(),
+      email: input.email?.trim().toLowerCase() || null,
+      phone: input.phone?.trim() || null,
+      color: input.color?.trim() || null,
+      is_active: input.is_active,
+    })
+    .eq("id", staffId)
+    .eq("salon_id", salonId)
+    .select()
+    .maybeSingle();
+
+  if (error) {
+    failed("updateStaff", error);
+    return { ok: false, error: STAFF_INVALID };
+  }
+  if (!data) return { ok: false, error: STAFF_INVALID };
+  return { ok: true, staff: data as Staff };
 }
 
 /**
@@ -701,25 +1055,33 @@ export async function setStaffServices(
   staffId: Uuid,
   serviceIds: Uuid[],
 ): Promise<StaffService[]> {
-  const member = mock.staff.find((s) => s.id === staffId && s.salon_id === salonId);
-  if (!member) return [];
+  const supabase = await supabaseServer();
 
-  const allowed = new Set(
-    mock.services.filter((s) => s.salon_id === salonId).map((s) => s.id),
-  );
+  // Only services of this salon may be linked; anything else is dropped rather
+  // than rejected, so a stale checkbox cannot block the whole save.
+  const own = await supabase.from("services").select("id").eq("salon_id", salonId);
+  if (failed("setStaffServices/services", own.error)) return [];
+  const allowed = new Set((own.data ?? []).map((row) => row.id as Uuid));
   const wanted = [...new Set(serviceIds)].filter((id) => allowed.has(id));
 
-  const kept = mock.staffServices.filter(
-    (link) => !(link.staff_id === staffId && link.salon_id === salonId),
-  );
-  const added: StaffService[] = wanted.map((service_id) => ({
-    staff_id: staffId,
-    service_id,
-    salon_id: salonId,
-  }));
-  mock.staffServices.length = 0;
-  mock.staffServices.push(...kept, ...added);
-  return copy(added);
+  // Replace the whole set: delete, then insert. Two statements rather than one
+  // transaction — if the insert fails the member is left with no services and
+  // the form has to be saved again. A Postgres function would make it atomic.
+  const removed = await supabase
+    .from("staff_services")
+    .delete()
+    .eq("staff_id", staffId)
+    .eq("salon_id", salonId);
+  if (failed("setStaffServices/delete", removed.error)) return [];
+
+  if (wanted.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from("staff_services")
+    .insert(wanted.map((service_id) => ({ staff_id: staffId, service_id, salon_id: salonId })))
+    .select();
+  if (failed("setStaffServices/insert", error)) return [];
+  return (data ?? []) as StaffService[];
 }
 
 /** "9:00" and "09:00" both become "09:00:00"; anything else returns null. */
@@ -742,17 +1104,14 @@ export async function setStaffHours(
   staffId: Uuid,
   hours: StaffHoursInput[],
 ): Promise<StaffHours[] | null> {
-  const member = mock.staff.find((s) => s.id === staffId && s.salon_id === salonId);
-  if (!member) return null;
-
-  const rows: StaffHours[] = [];
+  // Validate the whole week first: one bad row must not leave half a schedule.
+  const rows: Omit<StaffHours, "id">[] = [];
   for (const entry of hours) {
     const start = normalizeTime(entry.start_time);
     const end = normalizeTime(entry.end_time);
     if (!start || !end || start >= end) return null;
     if (!Number.isInteger(entry.weekday) || entry.weekday < 0 || entry.weekday > 6) return null;
     rows.push({
-      id: crypto.randomUUID(),
       salon_id: salonId,
       staff_id: staffId,
       weekday: entry.weekday,
@@ -761,12 +1120,19 @@ export async function setStaffHours(
     });
   }
 
-  const kept = mock.staffHours.filter(
-    (h) => !(h.staff_id === staffId && h.salon_id === salonId),
-  );
-  mock.staffHours.length = 0;
-  mock.staffHours.push(...kept, ...rows);
-  return copy(rows);
+  const supabase = await supabaseServer();
+  const removed = await supabase
+    .from("staff_hours")
+    .delete()
+    .eq("staff_id", staffId)
+    .eq("salon_id", salonId);
+  if (failed("setStaffHours/delete", removed.error)) return null;
+
+  if (rows.length === 0) return [];
+
+  const { data, error } = await supabase.from("staff_hours").insert(rows).select();
+  if (failed("setStaffHours/insert", error)) return null;
+  return (data ?? []) as StaffHours[];
 }
 
 // ---------- admin writes: time off ----------
@@ -783,43 +1149,56 @@ export async function createTimeOff(
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start >= end) {
     return { ok: false, error: TIME_OFF_INVALID };
   }
-  if (
-    input.staff_id &&
-    !mock.staff.some((s) => s.id === input.staff_id && s.salon_id === salonId)
-  ) {
+  const supabase = await supabaseServer();
+
+  // A composite foreign key already forbids borrowing another salon's staff,
+  // but a clear sentence beats a raw constraint error in the form.
+  if (input.staff_id) {
+    const member = await supabase
+      .from("staff")
+      .select("id")
+      .eq("id", input.staff_id)
+      .eq("salon_id", salonId)
+      .maybeSingle();
+    if (failed("createTimeOff/staff", member.error) || !member.data) {
+      return { ok: false, error: TIME_OFF_INVALID };
+    }
+  }
+
+  const { data, error } = await supabase
+    .from("time_off")
+    .insert({
+      salon_id: salonId,
+      staff_id: input.staff_id,
+      starts_at: start.toISOString(),
+      ends_at: end.toISOString(),
+      reason: input.reason?.trim() || null,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    failed("createTimeOff", error);
     return { ok: false, error: TIME_OFF_INVALID };
   }
-  const row: TimeOff = {
-    id: crypto.randomUUID(),
-    salon_id: salonId,
-    staff_id: input.staff_id,
-    starts_at: start.toISOString(),
-    ends_at: end.toISOString(),
-    reason: input.reason?.trim() || null,
-  };
-  mock.timeOff.push(row);
-  return { ok: true, time_off: copy(row) };
+  return { ok: true, time_off: data as TimeOff };
 }
 
 export async function deleteTimeOff(salonId: Uuid, timeOffId: Uuid): Promise<boolean> {
-  const index = mock.timeOff.findIndex((t) => t.id === timeOffId && t.salon_id === salonId);
-  if (index === -1) return false;
-  mock.timeOff.splice(index, 1);
-  return true;
+  const supabase = await supabaseServer();
+  const { data, error } = await supabase
+    .from("time_off")
+    .delete()
+    .eq("id", timeOffId)
+    .eq("salon_id", salonId)
+    .select("id");
+  if (failed("deleteTimeOff", error)) return false;
+  return (data ?? []).length > 0;
 }
 
 // ---------- admin writes: bookings ----------
 
 const BOOKING_INVALID = "Rezervacije ni mogoče spremeniti.";
-
-/** Which status may follow which. A finished booking is not reopened here. */
-const ALLOWED_STATUS: Record<BookingStatus, BookingStatus[]> = {
-  pending: ["confirmed", "cancelled", "no_show"],
-  confirmed: ["completed", "cancelled", "no_show"],
-  cancelled: [],
-  no_show: [],
-  completed: [],
-};
 
 /**
  * Moves a booking to another status (confirm, cancel, no-show, complete).
@@ -830,15 +1209,35 @@ export async function setBookingStatus(
   bookingId: Uuid,
   status: BookingStatus,
 ): Promise<SaveBookingResult> {
-  const booking = mock.bookings.find((b) => b.id === bookingId && b.salon_id === salonId);
-  if (!booking) return { ok: false, error: BOOKING_INVALID };
-  if (booking.status === status) return { ok: true, booking: copy(booking) };
-  if (!ALLOWED_STATUS[booking.status].includes(status)) {
+  const supabase = await supabaseServer();
+  const current = await supabase
+    .from("bookings")
+    .select("*")
+    .eq("id", bookingId)
+    .eq("salon_id", salonId)
+    .maybeSingle();
+  if (failed("setBookingStatus/read", current.error) || !current.data) {
+    return { ok: false, error: BOOKING_INVALID };
+  }
+
+  const booking = current.data as Booking;
+  if (booking.status === status) return { ok: true, booking };
+  if (!canChangeTo(booking.status, status)) {
     return { ok: false, error: "Tega statusa ni mogoče nastaviti." };
   }
-  booking.status = status;
-  booking.updated_at = new Date().toISOString();
-  return { ok: true, booking: copy(booking) };
+
+  // updated_at is left alone: the bookings_updated_at trigger sets it.
+  const { data, error } = await supabase
+    .from("bookings")
+    .update({ status })
+    .eq("id", bookingId)
+    .eq("salon_id", salonId)
+    .select()
+    .maybeSingle();
+  if (failed("setBookingStatus", error) || !data) {
+    return { ok: false, error: BOOKING_INVALID };
+  }
+  return { ok: true, booking: data as Booking };
 }
 
 /** The salon's private note on a booking. Never shown to the customer. */
@@ -847,13 +1246,21 @@ export async function setBookingInternalNote(
   bookingId: Uuid,
   note: string | null,
 ): Promise<SaveBookingResult> {
-  const booking = mock.bookings.find((b) => b.id === bookingId && b.salon_id === salonId);
-  if (!booking) return { ok: false, error: BOOKING_INVALID };
   const text = note?.trim() ?? "";
   if (text.length > 2000) return { ok: false, error: "Zaznamek je predolg." };
-  booking.internal_note = text || null;
-  booking.updated_at = new Date().toISOString();
-  return { ok: true, booking: copy(booking) };
+
+  const supabase = await supabaseServer();
+  const { data, error } = await supabase
+    .from("bookings")
+    .update({ internal_note: text || null })
+    .eq("id", bookingId)
+    .eq("salon_id", salonId)
+    .select()
+    .maybeSingle();
+  if (failed("setBookingInternalNote", error) || !data) {
+    return { ok: false, error: BOOKING_INVALID };
+  }
+  return { ok: true, booking: data as Booking };
 }
 
 // ---------- public: cancel by token ----------
@@ -871,30 +1278,45 @@ export async function setBookingInternalNote(
  * visitor has no account and `bookings` has no public RLS policy.
  */
 export async function cancelBookingByToken(token: string): Promise<SaveBookingResult> {
-  const booking = mock.bookings.find((b) => b.cancel_token === token);
-  if (!booking) return { ok: false, error: "Termina ni mogoče najti." };
+  const db = supabaseAdmin();
+  const { data, error } = await db
+    .from("bookings")
+    .select("*, salons(cancel_window_hours)")
+    .eq("cancel_token", token)
+    .maybeSingle();
+  if (failed("cancelBookingByToken", error) || !data) {
+    return { ok: false, error: "Termina ni mogoče najti." };
+  }
+
+  const booking = data as Booking & { salons: { cancel_window_hours: number } | null };
 
   // Cancelling twice is not an error: the customer clicked the link again.
-  if (booking.status === "cancelled") return { ok: true, booking: copy(booking) };
+  if (booking.status === "cancelled") return { ok: true, booking };
 
   if (booking.status === "completed" || booking.status === "no_show") {
     return { ok: false, error: "Tega termina ni več mogoče odpovedati." };
   }
 
-  const salon = mock.salons.find((s) => s.id === booking.salon_id);
-  if (!salon) return { ok: false, error: "Termina ni mogoče najti." };
-
-  const deadline = addMinutes(parseISO(booking.starts_at), -salon.cancel_window_hours * 60);
+  const windowHours = booking.salons?.cancel_window_hours ?? 0;
+  const deadline = addMinutes(parseISO(booking.starts_at), -windowHours * 60);
   if (new Date() > deadline) {
     return {
       ok: false,
-      error: `Termin je mogoče odpovedati najpozneje ${salon.cancel_window_hours} ur pred začetkom. Pokličite salon.`,
+      error: `Termin je mogoče odpovedati najpozneje ${windowHours} ur pred začetkom. Pokličite salon.`,
     };
   }
 
-  booking.status = "cancelled";
-  booking.updated_at = new Date().toISOString();
-  return { ok: true, booking: copy(booking) };
+  const updated = await db
+    .from("bookings")
+    .update({ status: "cancelled" })
+    .eq("id", booking.id)
+    .select()
+    .single();
+  if (updated.error) {
+    failed("cancelBookingByToken/update", updated.error);
+    return { ok: false, error: "Termina ni mogoče odpovedati." };
+  }
+  return { ok: true, booking: updated.data as Booking };
 }
 
 // ---------- admin writes: customers ----------
@@ -906,9 +1328,6 @@ export async function updateCustomer(
   customerId: Uuid,
   input: CustomerInput,
 ): Promise<SaveCustomerResult> {
-  const customer = mock.customers.find((c) => c.id === customerId && c.salon_id === salonId);
-  if (!customer || customer.anonymized_at) return { ok: false, error: CUSTOMER_INVALID };
-
   const first = input.first_name.trim();
   if (first.length < 1 || first.length > 80) return { ok: false, error: CUSTOMER_INVALID };
   const email = input.email?.trim().toLowerCase() || null;
@@ -916,15 +1335,29 @@ export async function updateCustomer(
     return { ok: false, error: "Vpišite veljaven e-naslov." };
   }
 
-  Object.assign(customer, {
-    first_name: first,
-    last_name: input.last_name?.trim() || null,
-    phone: input.phone?.trim() || null,
-    email,
-    notes: input.notes?.trim() || null,
-    marketing_consent: input.marketing_consent,
-  });
-  return { ok: true, customer: copy(customer) };
+  const supabase = await supabaseServer();
+  // `anonymized_at is null` is part of the filter: an erased customer has
+  // nothing to edit, and their details must never come back.
+  const { data, error } = await supabase
+    .from("customers")
+    .update({
+      first_name: first,
+      last_name: input.last_name?.trim() || null,
+      phone: input.phone?.trim() || null,
+      email,
+      notes: input.notes?.trim() || null,
+      marketing_consent: input.marketing_consent,
+    })
+    .eq("id", customerId)
+    .eq("salon_id", salonId)
+    .is("anonymized_at", null)
+    .select()
+    .maybeSingle();
+
+  if (failed("updateCustomer", error) || !data) {
+    return { ok: false, error: CUSTOMER_INVALID };
+  }
+  return { ok: true, customer: data as Customer };
 }
 
 /**
@@ -935,34 +1368,67 @@ export async function anonymizeCustomer(
   salonId: Uuid,
   customerId: Uuid,
 ): Promise<SaveCustomerResult> {
-  const customer = mock.customers.find((c) => c.id === customerId && c.salon_id === salonId);
-  if (!customer) return { ok: false, error: CUSTOMER_INVALID };
-  if (customer.anonymized_at) return { ok: true, customer: copy(customer) };
+  const supabase = await supabaseServer();
+  const current = await supabase
+    .from("customers")
+    .select("*")
+    .eq("id", customerId)
+    .eq("salon_id", salonId)
+    .maybeSingle();
+  if (failed("anonymizeCustomer/read", current.error) || !current.data) {
+    return { ok: false, error: CUSTOMER_INVALID };
+  }
 
-  Object.assign(customer, {
-    first_name: "Izbrisana stranka",
-    last_name: null,
-    phone: null,
-    email: null,
-    notes: null,
-    marketing_consent: false,
-    anonymized_at: new Date().toISOString(),
-  });
-  return { ok: true, customer: copy(customer) };
+  // Erasing twice is not an error, and must not move the date.
+  const customer = current.data as Customer;
+  if (customer.anonymized_at) return { ok: true, customer };
+
+  const { data, error } = await supabase
+    .from("customers")
+    .update({
+      first_name: "Izbrisana stranka",
+      last_name: null,
+      phone: null,
+      email: null,
+      notes: null,
+      marketing_consent: false,
+      anonymized_at: new Date().toISOString(),
+    })
+    .eq("id", customerId)
+    .eq("salon_id", salonId)
+    .select()
+    .maybeSingle();
+
+  if (failed("anonymizeCustomer", error) || !data) {
+    return { ok: false, error: CUSTOMER_INVALID };
+  }
+  return { ok: true, customer: data as Customer };
 }
 
 // ---------- auth (PLACEHOLDER) ----------
 
 /**
- * There is no authentication yet (see README, "Stanje: faza 1"), so this always
- * refuses. It exists so /prijava already talks to lib/data.ts like every other
- * screen; with Supabase Auth the body becomes signInWithPassword() and the
- * result carries the real user id, which links to staff.user_id.
+ * Signs a salon owner in with Supabase Auth.
+ *
+ * On success the session cookie is written by the server client, proxy.ts keeps
+ * it fresh, and lib/auth.ts turns the user id into a staff row of this salon.
+ *
+ * A wrong e-mail and a wrong password give the SAME message on purpose: telling
+ * them apart would let anyone check which addresses have an account here.
  */
 export async function signIn(input: SignInInput): Promise<SignInResult> {
-  void input; // deliberately unused until Supabase Auth is wired up
-  return {
-    ok: false,
-    error: "Prijava še ni na voljo. Vklopljena bo, ko bo priklopljena baza.",
-  };
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Prijava še ni na voljo: baza ni nastavljena." };
+  }
+
+  const supabase = await supabaseServer();
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: input.email,
+    password: input.password,
+  });
+
+  if (error || !data.user) {
+    return { ok: false, error: "Napačen e-naslov ali geslo." };
+  }
+  return { ok: true, user_id: data.user.id };
 }

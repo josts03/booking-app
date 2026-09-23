@@ -144,13 +144,13 @@ export interface Booking {
   cancel_token: Uuid;
   created_at: Timestamptz;
   updated_at: Timestamptz;
-  /** Generated column: tstzrange(starts_at, ends_at + buffer_min). Read-only. */
+  /** tstzrange(starts_at, ends_at + buffer_min), kept by a trigger. Read-only. */
   period: string;
 }
 
 // ============ app types (not tables) ============
-// Inputs and outputs of the functions in lib/data.ts. They keep the same shape
-// after the mock is replaced by Supabase.
+// Inputs and outputs of the functions in lib/data.ts. They are the contract the
+// screens rely on, independent of how the data is stored.
 
 /** A bookable start time. `ends_at` is starts_at + duration (without buffer). */
 export interface FreeSlot {

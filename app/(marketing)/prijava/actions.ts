@@ -1,5 +1,6 @@
 "use server";
 
+import { redirect } from "next/navigation";
 import { signIn } from "@/lib/data";
 
 export type SignInField = "email" | "password";
@@ -17,12 +18,11 @@ function text(formData: FormData, key: string): string {
 }
 
 /**
- * Signs the salon owner in.
+ * Signs the salon owner in and sends them to the admin.
  *
- * Phase 1: lib/data.ts has no authentication, so this always comes back with a
- * message saying so — it never pretends the visitor is signed in. When Supabase
- * Auth arrives, only the body of signIn() changes; on `ok` this action will set
- * the session cookie and redirect to /admin.
+ * `next` carries where they were heading before proxy.ts turned them away. It
+ * is only honoured when it points at /admin, so a crafted link cannot bounce
+ * someone off to another site after signing in.
  */
 export async function submitSignIn(
   _previous: SignInFormState,
@@ -39,7 +39,7 @@ export async function submitSignIn(
   const result = await signIn({ email, password });
   if (!result.ok) return { message: result.error, email };
 
-  // Unreachable in phase 1. With Supabase Auth: set the session, then
-  // redirect("/admin").
-  return { email };
+  const next = formData.get("next");
+  const target = typeof next === "string" && next.startsWith("/admin") ? next : "/admin";
+  redirect(target);
 }

@@ -9,19 +9,13 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default function SignInPage() {
+export default async function SignInPage({ searchParams }: PageProps<"/prijava">) {
+  const params = await searchParams;
+  const next = typeof params.next === "string" ? params.next : undefined;
+
   return (
-    <FormShell
-      title="Prijava"
-      lead="Vpišite se v koledar svojega salona."
-      footer={
-        <p className="rounded-control bg-warning/10 p-3 text-warning">
-          Prijava še ni vklopljena: v fazi 1 baze in računov še ni, zato je{" "}
-          <code className="font-mono">/admin</code> odprt vsem.
-        </p>
-      }
-    >
-      <SignInForm />
+    <FormShell title="Prijava" lead="Vpišite se v koledar svojega salona.">
+      <SignInForm next={next} />
     </FormShell>
   );
 }

@@ -225,9 +225,11 @@ create table if not exists bookings (
   updated_at    timestamptz not null default now(),
 
   -- The slot the chair is actually occupied for: the service plus its cleanup.
-  period tstzrange generated always as (
-    tstzrange(starts_at, ends_at + make_interval(mins => buffer_min), '[)')
-  ) stored,
+  -- Maintained by the bookings_period trigger below, never written by the app.
+  -- NOT a generated column: Postgres demands an IMMUTABLE expression there, and
+  -- `timestamptz + interval` is only STABLE (interval arithmetic can depend on
+  -- the session timezone), which fails with SQLSTATE 42P17.
+  period tstzrange not null,
 
   -- Everything on a booking must belong to the same salon.
   foreign key (staff_id, salon_id)    references staff (id, salon_id),
@@ -264,6 +266,28 @@ drop trigger if exists bookings_updated_at on bookings;
 create trigger bookings_updated_at
   before update on bookings
   for each row execute function set_updated_at();
+
+/**
+ * Keeps bookings.period in step with the times around it.
+ *
+ * Runs BEFORE the row is written, so the exclusion constraint below always sees
+ * a current value and the application never has to send one.
+ */
+create or replace function set_booking_period() returns trigger
+language plpgsql as $$
+begin
+  new.period := tstzrange(
+    new.starts_at,
+    new.ends_at + make_interval(mins => new.buffer_min),
+    '[)'
+  );
+  return new;
+end $$;
+
+drop trigger if exists bookings_period on bookings;
+create trigger bookings_period
+  before insert or update of starts_at, ends_at, buffer_min on bookings
+  for each row execute function set_booking_period();
 
 -- ============================ row level security ============================
 -- Two kinds of caller:

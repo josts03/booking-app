@@ -16,12 +16,14 @@ import { submitSignIn, type SignInFormState } from "./actions";
  * server half does not exist yet: submitting always answers that sign-in is not
  * switched on (see lib/data.ts signIn), so nobody is led to believe otherwise.
  */
-export function SignInForm() {
+export function SignInForm({ next }: { next?: string }) {
   const [state, action, pending] = useActionState<SignInFormState, FormData>(submitSignIn, null);
   const ids = useId();
 
   return (
     <form action={action} noValidate className="space-y-5">
+      <input type="hidden" name="next" value={next ?? ""} />
+
       <div>
         <label className="block" htmlFor={`email-${ids}`}>
           <span className={labelClass}>E-naslov</span>

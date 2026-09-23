@@ -2,10 +2,10 @@
  * Which start times a visitor may actually book.
  *
  * This is the one piece of real business logic in the app, so it is kept pure:
- * no database, no clock of its own, no `mock`. Everything it needs is handed in,
- * including `now`. That makes it the only part worth covering with tests, and it
- * means lib/data.ts changes nothing here when Supabase replaces the mock — it
- * just loads the rows from Postgres instead and passes the same shapes.
+ * no database and no clock of its own. Everything it needs is handed in,
+ * including `now`. That makes it the only part worth covering with tests, and
+ * it is why lib/data.ts can load a whole month in five queries and then run
+ * this per day in memory.
  *
  * The rules, in the order they are applied:
  *   1. the day must lie inside the salon's booking window (max_days_ahead)

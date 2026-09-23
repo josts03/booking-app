@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { getSignedInStaff, NOT_SIGNED_IN } from "@/lib/auth";
 import { getCurrentSalon } from "@/lib/current-salon";
 import { updateSalon } from "@/lib/data";
 
@@ -46,7 +47,7 @@ const RANGES: Record<string, [number, number, string]> = {
 
 /**
  * Saves the salon's own settings.
- * TODO: admin login check, Zod validation (weeks 6-7).
+ * TODO: Zod validation (week 7).
  */
 export async function saveSettings(
   _previous: SettingsFormState,
@@ -84,6 +85,12 @@ export async function saveSettings(
   }
 
   if (Object.keys(errors).length > 0) return { errors, values };
+
+  // Checked here too. proxy.ts and the admin layout already turn strangers away,
+  // but a server action is its own endpoint and can be posted to directly, so it
+  // must not rely on a page having run first.
+  const staff = await getSignedInStaff();
+  if (!staff) return { message: NOT_SIGNED_IN, values };
 
   const salon = await getCurrentSalon();
   if (!salon) return { message: "Salona ni mogoče najti.", values };

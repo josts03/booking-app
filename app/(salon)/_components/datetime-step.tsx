@@ -8,7 +8,7 @@ import {
   parseISO,
 } from "date-fns";
 import { sl } from "date-fns/locale";
-import { getFreeSlots } from "@/lib/data";
+import { getFreeSlotsByDay } from "@/lib/data";
 import { formatTime, localDay } from "@/lib/format";
 import type { Salon, Service } from "@/lib/types";
 import { flowHref } from "./flow-url";
@@ -60,23 +60,15 @@ export async function DateTimeStep({ salon, service, staff, monthParam, dayParam
   );
 
   // Free slots for every bookable day of this month (engine: lib/slots.ts).
+  // One call for the whole month on purpose: asking day by day would be around
+  // ninety database round trips for a single page view.
   const bookableDays = daysOfMonth.filter((day) => day >= today && day <= lastBookable);
-  const slotsByDay = new Map(
-    await Promise.all(
-      bookableDays.map(
-        async (day) =>
-          [
-            day,
-            await getFreeSlots({
-              salon_id: salon.id,
-              service_id: service.id,
-              staff_id: staffId,
-              day,
-            }),
-          ] as const,
-      ),
-    ),
-  );
+  const slotsByDay = await getFreeSlotsByDay({
+    salon_id: salon.id,
+    service_id: service.id,
+    staff_id: staffId,
+    days: bookableDays,
+  });
 
   const hasAnyFreeDay = [...slotsByDay.values()].some((slots) => slots.length > 0);
   const selectedDay = validDay && slotsByDay.get(validDay)?.length ? validDay : undefined;
