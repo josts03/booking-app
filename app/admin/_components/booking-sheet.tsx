@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { safeColor } from "@/lib/brand";
 import { formatDateTime, formatDuration, formatPrice, formatTime, formatWeekdayDate } from "@/lib/format";
+import { formatPhone } from "@/lib/phone";
 import type { Booking, Customer, Service, Staff } from "@/lib/types";
-import { BookingActions } from "./booking-actions";
 import { SheetShell } from "./sheet-shell";
 import { StatusBadge } from "./status-badge";
 import { buttonPrimary, buttonSecondary } from "./ui";
@@ -52,8 +52,8 @@ export function BookingSheet({
   if (customer?.phone) {
     rows.push([
       "Telefon",
-      <a key="tel" href={`tel:${customer.phone.replace(/\s/g, "")}`} className="font-medium text-brand-ink underline">
-        {customer.phone}
+      <a key="tel" href={`tel:${customer.phone}`} className="font-medium text-brand-ink underline">
+        {formatPhone(customer.phone)}
       </a>,
     ]);
   }
@@ -67,6 +67,7 @@ export function BookingSheet({
   }
   rows.push(["Cena", formatPrice(booking.price_cents)]);
   if (booking.customer_note) rows.push(["Opomba stranke", booking.customer_note]);
+  if (booking.internal_note) rows.push(["Interna opomba", booking.internal_note]);
   rows.push(["Vir", `${booking.source}, ustvarjeno ${formatDateTime(booking.created_at, timezone)}`]);
 
   return (
@@ -94,8 +95,6 @@ export function BookingSheet({
           </div>
         ))}
       </dl>
-
-      <BookingActions booking={booking} />
 
       <div className="mt-5 grid grid-cols-2 gap-3">
         <Link href={closeHref} className={buttonSecondary}>

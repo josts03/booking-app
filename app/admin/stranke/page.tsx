@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { getCurrentSalon } from "@/lib/current-salon";
 import { getCustomers } from "@/lib/data";
 import { formatDate } from "@/lib/format";
+import { formatPhone } from "@/lib/phone";
 import { buttonPrimary, card, inputClass, pageTitle } from "../_components/ui";
 
 export default async function CustomersPage({ searchParams }: PageProps<"/admin/stranke">) {
@@ -72,7 +73,7 @@ export default async function CustomersPage({ searchParams }: PageProps<"/admin/
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-semibold">{name}</span>
                     <span className="block truncate text-sm text-ink-muted">
-                      {customer.phone ?? customer.email ?? "Brez kontakta"}
+                      {customer.phone ? formatPhone(customer.phone) : (customer.email ?? "Brez kontakta")}
                     </span>
                     <span className="mt-0.5 block text-sm text-ink-muted">
                       {bookings_count} {bookings_count === 1 ? "obisk" : "obiskov"}

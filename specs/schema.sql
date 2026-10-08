@@ -1,381 +1,545 @@
--- =============================================================================
--- Termin: spletno naročanje za salone
--- Postgres / Supabase schema. Mirrors lib/types.ts field for field.
+-- Shema baze za platformo naročanja (multi-tenant).
 --
--- Run order: extensions -> enums -> tables -> indexes -> triggers -> RLS.
--- Safe to run on an empty database:  psql "$DATABASE_URL" -f specs/schema.sql
+-- Resnica so migracije v supabase/migrations/; ta datoteka je njihova kopija
+-- v enem kosu, za branje. Spremembe sheme: nova datoteka v supabase/migrations/
+-- in ista sprememba tukaj. Preverja jih `npm test` (tests/db.test.ts).
 --
--- RULES THIS SCHEMA ENFORCES (so the application cannot get them wrong):
---   * every row belongs to exactly one salon (salon_id everywhere)
---   * two bookings of the same staff member can never overlap (EXCLUDE)
---   * a booking's staff, service and customer must belong to the same salon
---   * prices, durations and windows stay inside the ranges lib/data.ts checks
--- =============================================================================
+-- Popravki glede na prvo verzijo (8. 10. 2026), v migracijah označeni s FIX/ADDED:
+--  1. bookings.period: Postgres je stolpec zavrnil ("generation expression is
+--     not immutable"), zato se tabela bookings sploh ni ustvarila. Zdaj
+--     uporablja funkcijo add_minutes().
+--  2. booking_notifications ima salon_id (pravilo: vsaka tabela ima salon_id).
+--     rate_limits je edina izjema (globalna, samo service_role), zapisano v CLAUDE.md.
+--  3. Anon ne bere staff.email, staff.phone, staff.user_id in time_off.reason
+--     (pravice na stolpce). Urnike, dopuste in storitve zaposlenih vidi samo
+--     za salone s statusom trial/active (prej using (true)).
+--  4. Admin salona ne more spremeniti subscription_status, trial_ends_at, slug
+--     in custom_domain (prej bi suspendiran salon lahko sam sebe vklopil).
+--  5. Pravice (GRANT) so zdaj izrecne: anon in authenticated dobita samo, kar
+--     rabita, service_role (strežnik) vse. Supabase od 30. 5. 2026 novim
+--     tabelam ne da pravic samodejno; brez tega strežnik ne bi mogel brati.
+--  6. Sestavljeni tuji ključi: termin, storitev, zaposleni in stranka morajo
+--     biti iz istega salona, sicer baza zavrne (23503).
+--  7. Preverjanja vrednosti: telefon stranke v zapisu E.164, slug kot poddomena,
+--     barve #rrggbb, korak terminov 5-240 min, nenegativne cene in trajanja.
+--  8. bookings.updated_at se posodobi ob vsaki spremembi (sprožilec).
+--  9. btree_gist v shemi extensions, kot priporoča Supabase.
+-- 10. 004: user_salon_ids() je v shemi private (API je ne more klicati), pravica
+--     za klic Supabasove rls_auto_enable() je odvzeta. Security Advisor: 0 opozoril.
 
-create extension if not exists "pgcrypto";   -- gen_random_uuid()
-create extension if not exists "btree_gist"; -- uuid + range in one EXCLUDE
 
--- ============================ enums =========================================
 
-do $$ begin
-  create type booking_status as enum
-    ('pending', 'confirmed', 'cancelled', 'no_show', 'completed');
-exception when duplicate_object then null; end $$;
+-- ============ 001_tables.sql ============
 
-do $$ begin
-  create type subscription_status as enum
-    ('trial', 'active', 'past_due', 'suspended', 'cancelled');
-exception when duplicate_object then null; end $$;
+-- 001_tables.sql: types, tables and one helper function.
+-- Source: specs/schema.sql. Constraints and indexes: 002. Row level security: 003.
+-- Changes against the first version of the spec are marked with "FIX:".
 
--- ============================ salons ========================================
+create schema if not exists extensions;
+-- For the exclusion constraint on bookings (gist index with uuid "="). Supabase
+-- keeps extensions in their own schema, not in public.
+create extension if not exists btree_gist with schema extensions;
 
-create table if not exists salons (
-  id                    uuid primary key default gen_random_uuid(),
-  slug                  text not null unique,
-  custom_domain         text unique,
-  name                  text not null,
-  phone                 text,
-  email                 text,
-  address               text,
-  timezone              text not null default 'Europe/Ljubljana',
-  logo_url              text,
-  brand_color           text,
-  slot_interval_min     integer not null default 15,
-  min_lead_time_min     integer not null default 120,
-  max_days_ahead        integer not null default 60,
-  cancel_window_hours   integer not null default 24,
-  require_confirmation  boolean not null default false,
-  reminder_hours_before integer not null default 24,
-  subscription_status   subscription_status not null default 'trial',
-  trial_ends_at         timestamptz default (now() + interval '14 days'),
-  created_at            timestamptz not null default now(),
+create type booking_status as enum
+  ('pending','confirmed','cancelled','no_show','completed');
+create type subscription_status as enum
+  ('trial','active','past_due','suspended','cancelled');
 
-  -- Same rule as SLUG_RULE in lib/data.ts and proxy.ts.
-  constraint salons_slug_shape check (slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'),
-  constraint salons_slug_length check (char_length(slug) between 3 and 40),
-  -- Subdomains the platform keeps (RESERVED_SLUGS in lib/data.ts).
-  constraint salons_slug_not_reserved check (slug not in (
-    'www', 'admin', 'api', 'app', 'mail', 'smtp', 'ftp', 'cdn', 'static',
-    'assets', 'blog', 'docs', 'help', 'support', 'status', 'dashboard',
-    'login', 'signup', 'prijava', 'registracija', 'rezervacija', 'cenik',
-    'demo', 'test-salon'
-  )),
-  constraint salons_name_length    check (char_length(name) between 2 and 80),
-  constraint salons_brand_color    check (brand_color is null or brand_color ~* '^#[0-9a-f]{6}$'),
-  constraint salons_slot_interval  check (slot_interval_min between 5 and 60),
-  constraint salons_lead_time      check (min_lead_time_min between 0 and 10080),
-  constraint salons_days_ahead     check (max_days_ahead between 1 and 365),
-  constraint salons_cancel_window  check (cancel_window_hours between 0 and 168),
-  constraint salons_reminder       check (reminder_hours_before between 0 and 168)
+create table salons (
+  id uuid primary key default gen_random_uuid(),
+  slug text not null unique,
+  custom_domain text unique,
+  name text not null,
+  phone text, email text, address text,
+  timezone text not null default 'Europe/Ljubljana',
+  logo_url text, brand_color text default '#111111',
+  -- booking settings
+  slot_interval_min int not null default 15,
+  min_lead_time_min int not null default 120,
+  max_days_ahead int not null default 60,
+  cancel_window_hours int not null default 24,
+  require_confirmation boolean not null default false,
+  reminder_hours_before int not null default 24,
+  -- subscription
+  subscription_status subscription_status not null default 'trial',
+  trial_ends_at timestamptz default now() + interval '14 days',
+  created_at timestamptz not null default now()
 );
 
--- ============================ staff =========================================
-
-create table if not exists staff (
-  id         uuid primary key default gen_random_uuid(),
-  salon_id   uuid not null references salons(id) on delete cascade,
-  -- The owner's / employee's login. NULL = in the calendar but cannot sign in.
-  user_id    uuid unique references auth.users(id) on delete set null,
-  name       text not null,
-  email      text,
-  phone      text,
-  color      text,
-  is_active  boolean not null default true,
-  sort_order integer not null default 0,
-
-  constraint staff_name_length check (char_length(name) between 1 and 80),
-  constraint staff_color_shape check (color is null or color ~* '^#[0-9a-f]{6}$')
+create table salon_users (
+  id uuid primary key default gen_random_uuid(),
+  salon_id uuid not null references salons on delete cascade,
+  user_id uuid not null references auth.users on delete cascade,
+  role text not null default 'owner' check (role in ('owner','staff')),
+  created_at timestamptz not null default now(),
+  unique (salon_id, user_id)
 );
 
-create index if not exists staff_salon_idx on staff (salon_id, sort_order);
-
--- Needed by the composite foreign keys in staff_services, staff_hours,
--- time_off and bookings: they prove staff and row share one salon.
-do $$ begin
-  alter table staff add constraint staff_id_salon_key unique (id, salon_id);
-exception when duplicate_table or duplicate_object then null; end $$;
-
--- ============================ services ======================================
-
-create table if not exists services (
-  id               uuid primary key default gen_random_uuid(),
-  salon_id         uuid not null references salons(id) on delete cascade,
-  name             text not null,
-  description      text,
-  category         text,
-  duration_min     integer not null,
-  buffer_after_min integer not null default 0,
-  price_cents      integer not null,
-  is_active        boolean not null default true,
-  sort_order       integer not null default 0,
-
-  constraint services_name_length check (char_length(name) between 1 and 80),
-  constraint services_duration    check (duration_min between 5 and 600),
-  constraint services_buffer      check (buffer_after_min between 0 and 240),
-  constraint services_price       check (price_cents between 0 and 1000000)
+create table staff (
+  id uuid primary key default gen_random_uuid(),
+  salon_id uuid not null references salons on delete cascade,
+  user_id uuid references auth.users on delete set null,
+  name text not null, email text, phone text,
+  color text default '#6366f1',
+  is_active boolean not null default true,
+  sort_order int not null default 0
 );
 
-create index if not exists services_salon_idx on services (salon_id, sort_order);
-
-do $$ begin
-  alter table services add constraint services_id_salon_key unique (id, salon_id);
-exception when duplicate_table or duplicate_object then null; end $$;
-
--- ============================ staff_services ================================
--- Who performs what. salon_id is repeated so the composite foreign keys below
--- can prove that staff and service belong to the SAME salon.
-
-create table if not exists staff_services (
-  staff_id   uuid not null,
-  service_id uuid not null,
-  salon_id   uuid not null references salons(id) on delete cascade,
-
-  primary key (staff_id, service_id),
-  foreign key (staff_id, salon_id)   references staff (id, salon_id)    on delete cascade,
-  foreign key (service_id, salon_id) references services (id, salon_id) on delete cascade
+create table services (
+  id uuid primary key default gen_random_uuid(),
+  salon_id uuid not null references salons on delete cascade,
+  name text not null, description text, category text,
+  duration_min int not null check (duration_min between 5 and 600),
+  buffer_after_min int not null default 0,
+  price_cents int not null default 0,
+  is_active boolean not null default true,
+  sort_order int not null default 0
 );
 
-create index if not exists staff_services_service_idx on staff_services (service_id);
-
--- ============================ staff_hours ===================================
--- The weekly schedule, in the salon's own wall-clock time (never UTC).
-
-create table if not exists staff_hours (
-  id         uuid primary key default gen_random_uuid(),
-  salon_id   uuid not null references salons(id) on delete cascade,
-  staff_id   uuid not null,
-  weekday    smallint not null,  -- 0 = Sunday ... 6 = Saturday
-  start_time time not null,
-  end_time   time not null,
-
-  foreign key (staff_id, salon_id) references staff (id, salon_id) on delete cascade,
-  constraint staff_hours_weekday check (weekday between 0 and 6),
-  constraint staff_hours_order   check (start_time < end_time)
+create table staff_services (
+  staff_id uuid not null references staff on delete cascade,
+  service_id uuid not null references services on delete cascade,
+  salon_id uuid not null references salons on delete cascade,
+  primary key (staff_id, service_id)
 );
 
-create index if not exists staff_hours_staff_idx on staff_hours (staff_id, weekday);
+create table staff_hours (
+  id uuid primary key default gen_random_uuid(),
+  salon_id uuid not null references salons on delete cascade,
+  staff_id uuid not null references staff on delete cascade,
+  weekday int not null check (weekday between 0 and 6),  -- 0 = Sunday
+  start_time time not null,  -- local wall-clock time in salons.timezone
+  end_time time not null,
+  check (end_time > start_time)
+);
 
--- ============================ time_off ======================================
--- staff_id NULL = the whole salon is closed (holiday, renovation).
-
-create table if not exists time_off (
-  id        uuid primary key default gen_random_uuid(),
-  salon_id  uuid not null references salons(id) on delete cascade,
-  staff_id  uuid,
+create table time_off (
+  id uuid primary key default gen_random_uuid(),
+  salon_id uuid not null references salons on delete cascade,
+  staff_id uuid references staff on delete cascade,  -- null = whole salon closed
   starts_at timestamptz not null,
-  ends_at   timestamptz not null,
-  reason    text,
-
-  foreign key (staff_id, salon_id) references staff (id, salon_id) on delete cascade,
-  constraint time_off_order check (starts_at < ends_at)
+  ends_at timestamptz not null,
+  reason text,
+  check (ends_at > starts_at)
 );
 
-create index if not exists time_off_salon_idx on time_off (salon_id, starts_at, ends_at);
-
--- ============================ customers =====================================
--- A customer belongs to one salon: two salons never share a customer row.
-
-create table if not exists customers (
-  id                uuid primary key default gen_random_uuid(),
-  salon_id          uuid not null references salons(id) on delete cascade,
-  first_name        text not null,
-  last_name         text,
-  phone             text,
-  email             text,
-  notes             text,
+create table customers (
+  id uuid primary key default gen_random_uuid(),
+  salon_id uuid not null references salons on delete cascade,
+  first_name text not null, last_name text,
+  phone text, email text,  -- phone in E.164, see 002 (customers_phone_e164)
+  notes text,
   marketing_consent boolean not null default false,
-  -- GDPR erasure: personal columns are cleared, the row stays so the salon's
-  -- history and numbers remain correct (see anonymizeCustomer in lib/data.ts).
-  anonymized_at     timestamptz,
-  created_at        timestamptz not null default now(),
-
-  constraint customers_first_name check (char_length(first_name) between 1 and 80)
+  anonymized_at timestamptz,
+  created_at timestamptz not null default now()
 );
 
--- One phone number identifies a returning customer within a salon.
-create unique index if not exists customers_salon_phone_key
-  on customers (salon_id, phone) where phone is not null and anonymized_at is null;
+-- FIX: ts + whole minutes. Postgres marks "timestamptz + interval" only STABLE
+-- (an interval in days or months depends on the time zone), and a generated
+-- column needs an IMMUTABLE expression, so the spec's bookings.period was
+-- rejected ("generation expression is not immutable"). Whole minutes never
+-- depend on the time zone, so this wrapper really is immutable.
+create function public.add_minutes(ts timestamptz, mins int)
+returns timestamptz
+language sql immutable parallel safe
+set search_path = ''
+as $$ select ts + make_interval(mins => mins) $$;
 
-create index if not exists customers_salon_idx on customers (salon_id, created_at desc);
-
-do $$ begin
-  alter table customers add constraint customers_id_salon_key unique (id, salon_id);
-exception when duplicate_table or duplicate_object then null; end $$;
-
--- ============================ bookings ======================================
-
-create table if not exists bookings (
-  id            uuid primary key default gen_random_uuid(),
-  salon_id      uuid not null references salons(id) on delete cascade,
-  staff_id      uuid not null,
-  service_id    uuid not null,
-  customer_id   uuid not null,
-  starts_at     timestamptz not null,
-  ends_at       timestamptz not null,
-  buffer_min    integer not null default 0,
-  status        booking_status not null default 'confirmed',
-  -- Copied from services.price_cents when the booking is made, so a later price
-  -- change never rewrites history.
-  price_cents   integer not null,
-  customer_note text,
-  internal_note text,
-  source        text not null default 'web',
-  cancel_token  uuid not null default gen_random_uuid() unique,
-  created_at    timestamptz not null default now(),
-  updated_at    timestamptz not null default now(),
-
-  -- The slot the chair is actually occupied for: the service plus its cleanup.
-  -- Maintained by the bookings_period trigger below, never written by the app.
-  -- NOT a generated column: Postgres demands an IMMUTABLE expression there, and
-  -- `timestamptz + interval` is only STABLE (interval arithmetic can depend on
-  -- the session timezone), which fails with SQLSTATE 42P17.
-  period tstzrange not null,
-
-  -- Everything on a booking must belong to the same salon.
-  foreign key (staff_id, salon_id)    references staff (id, salon_id),
-  foreign key (service_id, salon_id)  references services (id, salon_id),
-  foreign key (customer_id, salon_id) references customers (id, salon_id),
-
-  constraint bookings_order  check (starts_at < ends_at),
-  constraint bookings_buffer check (buffer_min between 0 and 240),
-  constraint bookings_price  check (price_cents between 0 and 1000000),
-
-  -- THE important one: one staff member, one chair, one customer at a time.
-  -- A cancelled booking frees its slot. Violating this raises SQLSTATE 23P01,
-  -- which the server action turns into "Ta termin je bil pravkar zaseden."
-  constraint bookings_no_overlap exclude using gist (
-    staff_id with =,
-    period   with &&
-  ) where (status <> 'cancelled')
+create table bookings (
+  id uuid primary key default gen_random_uuid(),
+  salon_id uuid not null references salons on delete cascade,
+  staff_id uuid not null references staff on delete restrict,
+  service_id uuid not null references services on delete restrict,
+  customer_id uuid not null references customers on delete restrict,
+  starts_at timestamptz not null,
+  ends_at timestamptz not null,  -- what the customer sees, without the buffer
+  buffer_min int not null default 0,
+  status booking_status not null default 'confirmed',
+  price_cents int not null default 0,
+  customer_note text, internal_note text,
+  source text not null default 'online',
+  cancel_token uuid not null default gen_random_uuid(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  check (ends_at > starts_at),
+  -- Time the staff member is busy: the booking plus the cleaning buffer.
+  period tstzrange generated always as
+    (tstzrange(starts_at, public.add_minutes(ends_at, buffer_min), '[)')) stored
 );
 
-create index if not exists bookings_salon_time_idx on bookings (salon_id, starts_at);
-create index if not exists bookings_customer_idx   on bookings (customer_id, starts_at desc);
-create index if not exists bookings_staff_time_idx on bookings (staff_id, starts_at);
+create table booking_notifications (
+  id uuid primary key default gen_random_uuid(),
+  -- FIX: salon_id, like every other salon table (CLAUDE.md), so RLS can use it.
+  salon_id uuid not null references salons on delete cascade,
+  booking_id uuid not null references bookings on delete cascade,
+  kind text not null check (kind in ('confirmation','reminder','cancellation')),
+  channel text not null default 'email',
+  status text not null default 'sent',
+  provider_id text,
+  sent_at timestamptz not null default now(),
+  unique (booking_id, kind, channel)
+);
 
--- ============================ triggers ======================================
+create table payments (
+  id uuid primary key default gen_random_uuid(),
+  salon_id uuid not null references salons on delete cascade,
+  booking_id uuid references bookings on delete set null,
+  kind text not null check (kind in ('deposit','full')),
+  amount_cents int not null,
+  provider text, provider_ref text,
+  status text not null default 'pending',
+  created_at timestamptz not null default now()
+);
 
-create or replace function set_updated_at() returns trigger
-language plpgsql as $$
+create table audit_log (
+  id bigserial primary key,
+  salon_id uuid references salons on delete cascade,  -- null = platform-level action
+  actor_user_id uuid,
+  action text not null, entity text not null, entity_id uuid,
+  payload jsonb,
+  created_at timestamptz not null default now()
+);
+
+-- The one table without salon_id (CLAUDE.md lists the exception): limits are
+-- counted per IP or phone number across all salons. service_role only.
+create table rate_limits (
+  id bigserial primary key,
+  bucket text not null,          -- e.g. 'ip:1.2.3.4' or 'phone:+38640123456'
+  window_start timestamptz not null,
+  count int not null default 1,
+  unique (bucket, window_start)
+);
+
+-- ============ 002_constraints.sql ============
+
+-- 002_constraints.sql: rules the database enforces itself, whatever the code does.
+-- Source: specs/schema.sql. Additions against the first version are marked "ADDED:".
+
+-- ---------- no double booking ----------
+-- Overlapping pending/confirmed bookings of the same staff member are rejected
+-- with error 23P01. period includes the cleaning buffer. With two simultaneous
+-- requests for the same time this is the only real protection: one insert wins.
+alter table bookings add constraint bookings_no_overlap
+  exclude using gist (staff_id with =, period with &&)
+  where (status in ('pending','confirmed'));
+
+-- ---------- indexes ----------
+create index bookings_salon_time on bookings (salon_id, starts_at);
+create index bookings_staff_time on bookings (staff_id, starts_at);
+create index staff_hours_lookup on staff_hours (staff_id, weekday);
+create index time_off_lookup on time_off (salon_id, starts_at, ends_at);
+create index customers_salon on customers (salon_id);
+create unique index customers_salon_phone
+  on customers (salon_id, phone) where phone is not null;
+
+-- ---------- ADDED: everything in a row belongs to the same salon ----------
+-- A plain foreign key only checks that the staff member exists, not that it
+-- works in the same salon as the booking. These composite keys make "a booking
+-- in salon A with a staff member, service or customer of salon B" impossible
+-- (error 23503), even if the code forgets to check (CLAUDE.md requires the
+-- check in code as well).
+alter table staff     add constraint staff_id_salon_key     unique (id, salon_id);
+alter table services  add constraint services_id_salon_key  unique (id, salon_id);
+alter table customers add constraint customers_id_salon_key unique (id, salon_id);
+alter table bookings  add constraint bookings_id_salon_key  unique (id, salon_id);
+
+alter table staff_services
+  add constraint staff_services_staff_same_salon
+    foreign key (staff_id, salon_id) references staff (id, salon_id) on delete cascade,
+  add constraint staff_services_service_same_salon
+    foreign key (service_id, salon_id) references services (id, salon_id) on delete cascade;
+
+alter table staff_hours
+  add constraint staff_hours_staff_same_salon
+    foreign key (staff_id, salon_id) references staff (id, salon_id) on delete cascade;
+
+-- A row with staff_id null (whole salon closed) is not checked, as intended.
+alter table time_off
+  add constraint time_off_staff_same_salon
+    foreign key (staff_id, salon_id) references staff (id, salon_id) on delete cascade;
+
+alter table bookings
+  add constraint bookings_staff_same_salon
+    foreign key (staff_id, salon_id) references staff (id, salon_id) on delete restrict,
+  add constraint bookings_service_same_salon
+    foreign key (service_id, salon_id) references services (id, salon_id) on delete restrict,
+  add constraint bookings_customer_same_salon
+    foreign key (customer_id, salon_id) references customers (id, salon_id) on delete restrict;
+
+alter table booking_notifications
+  add constraint booking_notifications_same_salon
+    foreign key (booking_id, salon_id) references bookings (id, salon_id) on delete cascade;
+
+alter table payments
+  add constraint payments_booking_same_salon
+    foreign key (booking_id, salon_id) references bookings (id, salon_id)
+    on delete set null (booking_id);
+
+-- ---------- ADDED: valid values ----------
+-- Same pattern as SLUG_PATTERN in proxy.ts: every slug must work as a subdomain.
+alter table salons add constraint salons_slug_format
+  check (slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$');
+
+-- Colors end up in CSS. Only #rrggbb is accepted (lib/brand.ts expects the same).
+alter table salons add constraint salons_brand_color_format
+  check (brand_color is null or brand_color ~ '^#[0-9a-fA-F]{6}$');
+alter table staff add constraint staff_color_format
+  check (color is null or color ~ '^#[0-9a-fA-F]{6}$');
+
+-- slot_interval_min = 0 would make the free-slot engine loop forever.
+alter table salons add constraint salons_booking_settings
+  check (slot_interval_min between 5 and 240
+     and min_lead_time_min >= 0
+     and max_days_ahead between 1 and 365
+     and cancel_window_hours >= 0
+     and reminder_hours_before >= 0);
+
+alter table services add constraint services_amounts
+  check (buffer_after_min >= 0 and price_cents >= 0);
+alter table bookings add constraint bookings_amounts
+  check (buffer_min >= 0 and price_cents >= 0);
+alter table payments add constraint payments_amount
+  check (amount_cents > 0);
+
+-- E.164 ("+38640123456"), see lib/phone.ts. With mixed formats the unique index
+-- customers_salon_phone would let the same person in twice.
+alter table customers add constraint customers_phone_e164
+  check (phone is null or phone ~ '^\+[1-9][0-9]{7,14}$');
+
+-- ---------- ADDED: bookings.updated_at follows every change ----------
+create function public.set_updated_at()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
 begin
   new.updated_at := now();
   return new;
-end $$;
-
-drop trigger if exists bookings_updated_at on bookings;
-create trigger bookings_updated_at
-  before update on bookings
-  for each row execute function set_updated_at();
-
-/**
- * Keeps bookings.period in step with the times around it.
- *
- * Runs BEFORE the row is written, so the exclusion constraint below always sees
- * a current value and the application never has to send one.
- */
-create or replace function set_booking_period() returns trigger
-language plpgsql as $$
-begin
-  new.period := tstzrange(
-    new.starts_at,
-    new.ends_at + make_interval(mins => new.buffer_min),
-    '[)'
-  );
-  return new;
-end $$;
-
-drop trigger if exists bookings_period on bookings;
-create trigger bookings_period
-  before insert or update of starts_at, ends_at, buffer_min on bookings
-  for each row execute function set_booking_period();
-
--- ============================ row level security ============================
--- Two kinds of caller:
---   * anon      - the public booking page. Reads what a visitor must see and
---                 creates bookings only through the server action.
---   * staff     - a signed-in member of THAT salon (staff.user_id = auth.uid()).
-
-/** True when the signed-in user works at this salon. */
-create or replace function is_salon_member(target_salon uuid) returns boolean
-language sql stable security definer set search_path = public as $$
-  select exists (
-    select 1 from staff
-    where staff.salon_id = target_salon
-      and staff.user_id = auth.uid()
-      and staff.is_active
-  );
+end
 $$;
 
-alter table salons         enable row level security;
-alter table staff          enable row level security;
-alter table services       enable row level security;
+create trigger bookings_set_updated_at
+  before update on bookings
+  for each row execute function public.set_updated_at();
+
+-- ============ 003_rls.sql ============
+
+-- 003_rls.sql: who may read and write what.
+-- Source: specs/schema.sql. Additions against the first version are marked "ADDED:".
+--
+-- Two layers, both always needed:
+--   1. GRANT: which tables and columns a role may touch at all.
+--   2. RLS policies: which rows.
+-- Roles in Supabase:
+--   anon           visitor without login (publishable key, the booking page)
+--   authenticated  logged-in user (salon admin)
+--   service_role   server only (secret key, lib/supabase/admin.ts); bypasses RLS
+
+-- ---------- helper: the salons of the logged-in user ----------
+create or replace function public.user_salon_ids()
+returns setof uuid
+language sql stable security definer
+set search_path = ''
+as $$
+  select salon_id from public.salon_users where user_id = auth.uid()
+$$;
+-- ADDED: only logged-in users need it (it is used in their policies).
+revoke all on function public.user_salon_ids() from public, anon;
+grant execute on function public.user_salon_ids() to authenticated;
+
+-- ---------- RLS on every table, no exceptions ----------
+alter table salons enable row level security;
+alter table salon_users enable row level security;
+alter table staff enable row level security;
+alter table services enable row level security;
 alter table staff_services enable row level security;
-alter table staff_hours    enable row level security;
-alter table time_off       enable row level security;
-alter table customers      enable row level security;
-alter table bookings       enable row level security;
+alter table staff_hours enable row level security;
+alter table time_off enable row level security;
+alter table customers enable row level security;
+alter table bookings enable row level security;
+alter table booking_notifications enable row level security;
+alter table payments enable row level security;
+alter table audit_log enable row level security;
+alter table rate_limits enable row level security;
 
--- --- public reads: only what the booking page needs ---
+-- ---------- salon members: their own salon, nothing else ----------
+create policy salon_rw on staff for all to authenticated
+  using (salon_id in (select public.user_salon_ids()))
+  with check (salon_id in (select public.user_salon_ids()));
+create policy salon_rw on services for all to authenticated
+  using (salon_id in (select public.user_salon_ids()))
+  with check (salon_id in (select public.user_salon_ids()));
+create policy salon_rw on staff_services for all to authenticated
+  using (salon_id in (select public.user_salon_ids()))
+  with check (salon_id in (select public.user_salon_ids()));
+create policy salon_rw on staff_hours for all to authenticated
+  using (salon_id in (select public.user_salon_ids()))
+  with check (salon_id in (select public.user_salon_ids()));
+create policy salon_rw on time_off for all to authenticated
+  using (salon_id in (select public.user_salon_ids()))
+  with check (salon_id in (select public.user_salon_ids()));
+create policy salon_rw on customers for all to authenticated
+  using (salon_id in (select public.user_salon_ids()))
+  with check (salon_id in (select public.user_salon_ids()));
+create policy salon_rw on bookings for all to authenticated
+  using (salon_id in (select public.user_salon_ids()))
+  with check (salon_id in (select public.user_salon_ids()));
+create policy salon_rw on booking_notifications for all to authenticated
+  using (salon_id in (select public.user_salon_ids()))
+  with check (salon_id in (select public.user_salon_ids()));
+create policy salon_rw on payments for all to authenticated
+  using (salon_id in (select public.user_salon_ids()))
+  with check (salon_id in (select public.user_salon_ids()));
 
-drop policy if exists salons_public_read on salons;
-create policy salons_public_read on salons
-  for select using (subscription_status in ('trial', 'active'));
+create policy salon_read on salons for select to authenticated
+  using (id in (select public.user_salon_ids()));
+create policy salon_update on salons for update to authenticated
+  using (id in (select public.user_salon_ids()))
+  with check (id in (select public.user_salon_ids()));
 
-drop policy if exists services_public_read on services;
-create policy services_public_read on services
-  for select using (is_active);
+create policy own_membership on salon_users for select to authenticated
+  using (user_id = auth.uid());
 
-drop policy if exists staff_public_read on staff;
-create policy staff_public_read on staff
-  for select using (is_active);
+-- ---------- visitors (anon): only what booking needs, only of open salons ----------
+-- The public pages read with the publishable key and no user session, so a logged-in
+-- salon admin sees other salons' booking pages like any visitor.
+create policy public_read_salon on salons for select to anon
+  using (subscription_status in ('trial','active'));
+create policy public_read_services on services for select to anon
+  using (is_active and salon_id in
+    (select id from salons where subscription_status in ('trial','active')));
+create policy public_read_staff on staff for select to anon
+  using (is_active and salon_id in
+    (select id from salons where subscription_status in ('trial','active')));
+-- ADDED: the spec had "using (true)" on the next three, which exposed the
+-- data of suspended salons too.
+create policy public_read_staff_services on staff_services for select to anon
+  using (salon_id in
+    (select id from salons where subscription_status in ('trial','active')));
+create policy public_read_hours on staff_hours for select to anon
+  using (salon_id in
+    (select id from salons where subscription_status in ('trial','active')));
+create policy public_read_timeoff on time_off for select to anon
+  using (salon_id in
+    (select id from salons where subscription_status in ('trial','active')));
 
-drop policy if exists staff_services_public_read on staff_services;
-create policy staff_services_public_read on staff_services
-  for select using (true);
+-- IMPORTANT: customers, bookings, booking_notifications, payments, audit_log and
+-- rate_limits get NO anon policy. Bookings are created in a server action with
+-- the service_role key.
 
-drop policy if exists staff_hours_public_read on staff_hours;
-create policy staff_hours_public_read on staff_hours
-  for select using (true);
+-- ---------- ADDED: table and column privileges ----------
+-- Older Supabase projects grant everything on new tables to anon and
+-- authenticated (RLS is then the only barrier); projects created after
+-- 30. 5. 2026 grant nothing, not even to service_role. Either way: start from
+-- nothing and grant exactly what is needed.
+revoke all on all tables in schema public from anon, authenticated;
+revoke all on all sequences in schema public from anon, authenticated;
 
-drop policy if exists time_off_public_read on time_off;
-create policy time_off_public_read on time_off
-  for select using (true);
+-- service_role (the server, secret key): every table. RLS does not apply to it.
+-- Without this the booking server action fails with "permission denied" on a
+-- new project.
+grant select, insert, update, delete on all tables in schema public to service_role;
+grant usage, select on all sequences in schema public to service_role;
 
--- --- the salon's own people: full access to their salon, nothing else ---
+-- anon: read only. On staff and time_off only the columns the booking page needs.
+-- Not readable: staff.email, staff.phone, staff.user_id (personal data) and
+-- time_off.reason (can reveal health, e.g. sick leave).
+grant select on salons, services, staff_services, staff_hours to anon;
+grant select (id, salon_id, name, color, is_active, sort_order) on staff to anon;
+grant select (id, salon_id, staff_id, starts_at, ends_at) on time_off to anon;
 
-drop policy if exists salons_member_all on salons;
-create policy salons_member_all on salons
-  for all using (is_salon_member(id)) with check (is_salon_member(id));
+-- authenticated: their salon's data (RLS decides which rows).
+grant select, insert, update, delete on
+  staff, services, staff_services, staff_hours, time_off,
+  customers, bookings, booking_notifications, payments
+  to authenticated;
+grant select on salon_users to authenticated;
+grant select on salons to authenticated;
+-- Salon settings yes. slug, custom_domain, subscription_status and trial_ends_at
+-- no: only the platform owner (service_role) changes those, otherwise a
+-- suspended salon could switch itself back on or extend its trial.
+grant update (name, phone, email, address, timezone, logo_url, brand_color,
+  slot_interval_min, min_lead_time_min, max_days_ahead, cancel_window_hours,
+  require_confirmation, reminder_hours_before) on salons to authenticated;
+-- audit_log and rate_limits: no privileges at all, service_role only.
 
-drop policy if exists staff_member_all on staff;
-create policy staff_member_all on staff
-  for all using (is_salon_member(salon_id)) with check (is_salon_member(salon_id));
+-- Tables from later migrations start with no privileges for anon and
+-- authenticated. Grant them explicitly (to service_role too), together with
+-- their RLS policies.
+alter default privileges in schema public revoke all on tables from anon, authenticated;
+alter default privileges in schema public revoke all on sequences from anon, authenticated;
 
-drop policy if exists services_member_all on services;
-create policy services_member_all on services
-  for all using (is_salon_member(salon_id)) with check (is_salon_member(salon_id));
+-- ============ 004_private_helpers.sql ============
 
-drop policy if exists staff_services_member_all on staff_services;
-create policy staff_services_member_all on staff_services
-  for all using (is_salon_member(salon_id)) with check (is_salon_member(salon_id));
+-- 004_private_helpers.sql: no SECURITY DEFINER function callable through the API.
+-- Fixes the three Security Advisor warnings after 001-003.
+--
+-- Supabase exposes the public schema through its Data API, so every function in
+-- public that a role may execute can be called as /rest/v1/rpc/<name>. Helper
+-- functions used by RLS policies belong in a schema the API does not expose.
 
-drop policy if exists staff_hours_member_all on staff_hours;
-create policy staff_hours_member_all on staff_hours
-  for all using (is_salon_member(salon_id)) with check (is_salon_member(salon_id));
+-- ---------- user_salon_ids() moves from public to private ----------
+create schema if not exists private;
+-- Logged-in users need the schema and the function: their RLS policies call it.
+-- The API cannot reach it, because "private" is not an exposed schema.
+grant usage on schema private to authenticated;
 
-drop policy if exists time_off_member_all on time_off;
-create policy time_off_member_all on time_off
-  for all using (is_salon_member(salon_id)) with check (is_salon_member(salon_id));
+create function private.user_salon_ids()
+returns setof uuid
+language sql stable security definer
+set search_path = ''
+as $$
+  select salon_id from public.salon_users where user_id = auth.uid()
+$$;
+revoke all on function private.user_salon_ids() from public, anon;
+grant execute on function private.user_salon_ids() to authenticated;
 
-drop policy if exists customers_member_all on customers;
-create policy customers_member_all on customers
-  for all using (is_salon_member(salon_id)) with check (is_salon_member(salon_id));
+-- The same policies as in 003_rls.sql, now calling the private function.
+alter policy salon_rw on staff
+  using (salon_id in (select private.user_salon_ids()))
+  with check (salon_id in (select private.user_salon_ids()));
+alter policy salon_rw on services
+  using (salon_id in (select private.user_salon_ids()))
+  with check (salon_id in (select private.user_salon_ids()));
+alter policy salon_rw on staff_services
+  using (salon_id in (select private.user_salon_ids()))
+  with check (salon_id in (select private.user_salon_ids()));
+alter policy salon_rw on staff_hours
+  using (salon_id in (select private.user_salon_ids()))
+  with check (salon_id in (select private.user_salon_ids()));
+alter policy salon_rw on time_off
+  using (salon_id in (select private.user_salon_ids()))
+  with check (salon_id in (select private.user_salon_ids()));
+alter policy salon_rw on customers
+  using (salon_id in (select private.user_salon_ids()))
+  with check (salon_id in (select private.user_salon_ids()));
+alter policy salon_rw on bookings
+  using (salon_id in (select private.user_salon_ids()))
+  with check (salon_id in (select private.user_salon_ids()));
+alter policy salon_rw on booking_notifications
+  using (salon_id in (select private.user_salon_ids()))
+  with check (salon_id in (select private.user_salon_ids()));
+alter policy salon_rw on payments
+  using (salon_id in (select private.user_salon_ids()))
+  with check (salon_id in (select private.user_salon_ids()));
+alter policy salon_read on salons
+  using (id in (select private.user_salon_ids()));
+alter policy salon_update on salons
+  using (id in (select private.user_salon_ids()))
+  with check (id in (select private.user_salon_ids()));
 
-drop policy if exists bookings_member_all on bookings;
-create policy bookings_member_all on bookings
-  for all using (is_salon_member(salon_id)) with check (is_salon_member(salon_id));
+-- No policy uses the public version any more.
+drop function public.user_salon_ids();
 
--- NOTE: customers and bookings have NO public policy on purpose. A visitor
--- never reads them directly; the booking form and the cancel link go through
--- server code holding the service role key, which bypasses RLS. Never ship
--- that key to the browser (see .env.example).
+-- ---------- Supabase's rls_auto_enable() ----------
+-- Created by Supabase when "Enable automatic RLS" is on: an event trigger that
+-- turns on RLS for every new table. It runs as a trigger and keeps working
+-- without anyone having EXECUTE on it, so the API roles do not need it.
+-- Only present on projects with that option, hence the check.
+do $$
+begin
+  if to_regprocedure('public.rls_auto_enable()') is not null then
+    revoke execute on function public.rls_auto_enable() from public, anon, authenticated;
+  end if;
+end
+$$;

@@ -8,11 +8,11 @@ import {
   getStaff,
 } from "@/lib/data";
 import { formatPrice, formatTime, formatWeekdayDate, localDay } from "@/lib/format";
+import { formatPhone } from "@/lib/phone";
 import type { Booking } from "@/lib/types";
 import { calendarHref } from "../../_components/calendar-url";
 import { StatusBadge } from "../../_components/status-badge";
 import { backLink, card, pageTitle } from "../../_components/ui";
-import { CustomerForm } from "./customer-form";
 
 export default async function CustomerPage({ params }: PageProps<"/admin/stranke/[id]">) {
   const { id } = await params;
@@ -98,9 +98,9 @@ export default async function CustomerPage({ params }: PageProps<"/admin/stranke
 
       <div className={`${card} divide-y divide-line`}>
         {customer.phone && (
-          <a href={`tel:${customer.phone.replace(/\s/g, "")}`} className="flex min-h-12 items-center justify-between px-4 py-2">
+          <a href={`tel:${customer.phone}`} className="flex min-h-12 items-center justify-between px-4 py-2">
             <span className="text-sm text-ink-muted">Telefon</span>
-            <span className="font-medium text-brand-ink underline">{customer.phone}</span>
+            <span className="font-medium text-brand-ink underline">{formatPhone(customer.phone)}</span>
           </a>
         )}
         {customer.email && (
@@ -108,6 +108,12 @@ export default async function CustomerPage({ params }: PageProps<"/admin/stranke
             <span className="text-sm text-ink-muted">E-pošta</span>
             <span className="break-all font-medium text-brand-ink underline">{customer.email}</span>
           </a>
+        )}
+        {customer.notes && (
+          <div className="px-4 py-3">
+            <p className="text-sm text-ink-muted">Interna opomba</p>
+            <p className="mt-0.5">{customer.notes}</p>
+          </div>
         )}
       </div>
 
@@ -119,8 +125,6 @@ export default async function CustomerPage({ params }: PageProps<"/admin/stranke
           </div>
         ))}
       </dl>
-
-      <CustomerForm customer={customer} />
 
       {upcoming.length > 0 && (
         <section>

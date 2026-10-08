@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { getCurrentSalon, isBookable } from "@/lib/current-salon";
 import { createBooking, getFreeSlots } from "@/lib/data";
 import { localDay } from "@/lib/format";
+import { normalizePhone } from "@/lib/phone";
 
 export type FieldName = "first_name" | "last_name" | "phone" | "email" | "note" | "terms";
 
@@ -18,7 +19,6 @@ export type FormState = {
 } | null;
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const PHONE = /^\+?\d{8,15}$/;
 
 function text(formData: FormData, key: string): string {
   const value = formData.get(key);
@@ -49,8 +49,9 @@ export async function submitBooking(_previous: FormState, formData: FormData): P
   else if (values.first_name.length > 60) errors.first_name = "Ime je predolgo.";
   if (values.last_name.length > 60) errors.last_name = "Priimek je predolg.";
 
-  const phone = values.phone.replace(/[\s\-().\/]/g, "");
-  if (!PHONE.test(phone)) errors.phone = "Vpišite veljavno telefonsko številko.";
+  // Stored as E.164 ("+38640123456"), so the same person is always the same customer.
+  const phone = normalizePhone(values.phone);
+  if (!phone) errors.phone = "Vpišite veljavno telefonsko številko, npr. 040 123 456.";
 
   if (!EMAIL.test(values.email) || values.email.length > 254) {
     errors.email = "Vpišite veljaven e-poštni naslov.";
@@ -58,7 +59,7 @@ export async function submitBooking(_previous: FormState, formData: FormData): P
   if (values.note.length > 500) errors.note = "Opomba je predolga (največ 500 znakov).";
   if (!values.terms) errors.terms = "Za rezervacijo se morate strinjati s pogoji.";
 
-  if (Object.keys(errors).length > 0) return { errors, values };
+  if (Object.keys(errors).length > 0 || !phone) return { errors, values };
 
   const salon = await getCurrentSalon();
   if (!salon || !isBookable(salon)) {

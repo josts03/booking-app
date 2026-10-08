@@ -1,5 +1,8 @@
 import type { CSSProperties, ReactNode } from "react";
-import { PRODUCT_NAME, SIGNIN_HREF, TRIAL_HREF } from "./_components/ui";
+
+// Placeholders: change here. The signup page does not exist yet.
+const PRODUCT_NAME = "Termin";
+const TRIAL_HREF = "/registracija";
 
 const audiences = [
   "Frizerski saloni",
@@ -59,20 +62,12 @@ export default function MarketingPage() {
       <header className="px-gutter">
         <div className="mx-auto flex h-16 max-w-page items-center justify-between">
           <span className="text-xl font-bold tracking-tight">{PRODUCT_NAME}</span>
-          <div className="flex items-center gap-1 sm:gap-2">
-            <a
-              href={SIGNIN_HREF}
-              className="inline-flex min-h-11 items-center rounded-control px-3 text-sm font-semibold text-ink transition-colors hover:bg-brand-soft"
-            >
-              Prijava
-            </a>
-            <a
-              href={TRIAL_HREF}
-              className="inline-flex min-h-11 items-center rounded-control bg-brand px-4 text-sm font-semibold text-brand-foreground transition-colors hover:bg-brand-strong"
-            >
-              Začni brezplačno
-            </a>
-          </div>
+          <a
+            href={TRIAL_HREF}
+            className="inline-flex min-h-11 items-center rounded-control bg-brand px-4 text-sm font-semibold text-brand-foreground transition-colors hover:bg-brand-strong"
+          >
+            Začni brezplačno
+          </a>
         </div>
       </header>
 
