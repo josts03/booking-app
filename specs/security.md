@@ -40,6 +40,7 @@
 - Regija Supabase projekta: `eu-central-1` (Frankfurt). Nepovratno.
 - Izbris stranke = anonimizacija: prepiši ime, telefon, e-pošto, opombe,
   nastavi `anonymized_at`, rezervacije OHRANI (zaradi statistike salona).
+  Pri njenih rezervacijah pobriši tudi `contact_email` (005).
 - Izvoz stranke v CSV: gumb v kartici stranke.
 - Rezervacije, starejše od treh let, se samodejno anonimizirajo.
 - Izvoz celega salona v CSV ob prekinitvi naročnine.

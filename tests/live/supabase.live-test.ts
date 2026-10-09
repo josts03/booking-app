@@ -430,6 +430,38 @@ describe("createBooking against the live database", () => {
     }
   });
 
+  test("005: a returning customer with a new e-mail gets the messages there; the customer row keeps the old one", async () => {
+    const env = process.env as Record<string, string | undefined>;
+    const saved = { RESEND_API_KEY: env.RESEND_API_KEY, EMAIL_FROM: env.EMAIL_FROM };
+    // Fake sender below: nothing reaches Resend.
+    env.RESEND_API_KEY = "re_fake_for_tests";
+    env.EMAIL_FROM = "Termin <obvestila@example.com>";
+    try {
+      const first = await remember(
+        await createBooking(newBooking({ starts_at: await freeStart(MENS_CUT.id, MAJA, 16), phone: phone(0), email: "prvi@example.com" })),
+      );
+      const second = await remember(
+        await createBooking(newBooking({ starts_at: await freeStart(MENS_CUT.id, MAJA, 16), phone: phone(0), email: "nov@example.com" })),
+      );
+      assert.ok(first.ok && second.ok);
+      assert.equal(first.booking.customer_id, second.booking.customer_id, "same phone, same customer");
+      assert.equal(first.booking.contact_email, "prvi@example.com");
+      assert.equal(second.booking.contact_email, "nov@example.com");
+
+      const sent: OutgoingEmail[] = [];
+      await sendBookingConfirmation(second.booking.id, {
+        now: () => new Date(),
+        send: async (message) => (sent.push(message), { ok: true, id: "fake-005" }),
+      });
+      assert.deepEqual(sent.map((m) => m.to), ["nov@example.com"]);
+
+      const customer = await adminDb().from("customers").select("email").eq("id", second.booking.customer_id).single();
+      assert.equal(customer.data?.email, "prvi@example.com", "the public form never changes a customer's e-mail");
+    } finally {
+      Object.assign(env, saved);
+    }
+  });
+
   test("no e-mail configured: nothing is claimed or sent", async () => {
     const env = process.env as Record<string, string | undefined>;
     const saved = env.RESEND_API_KEY;

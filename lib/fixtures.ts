@@ -280,6 +280,7 @@ export function buildFixtures(now: Date): Fixtures {
       customer_note,
       internal_note: null,
       source: "online",
+      contact_email: who.email,
       cancel_token: uuid(7, n),
       created_at: created,
       updated_at: created,

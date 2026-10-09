@@ -794,7 +794,10 @@ export async function getFreeSlots(query: FreeSlotsQuery): Promise<FreeSlot[]> {
 export interface NotificationData extends BookingEmailData {
   salonId: Uuid;
   bookingId: Uuid;
-  /** The customer's e-mail, or null (e.g. a phone booking entered by the salon). */
+  /**
+   * Where messages about this booking go: the e-mail given with the booking
+   * (bookings.contact_email), else the customer's, else null (no e-mail).
+   */
   to: string | null;
 }
 
@@ -843,7 +846,7 @@ export async function getNotificationData(bookingId: Uuid): Promise<Notification
   return {
     salonId: booking.salon_id,
     bookingId: booking.id,
-    to: customer.email,
+    to: booking.contact_email ?? customer.email,
     salon,
     booking,
     serviceName: service.name,
@@ -1112,6 +1115,9 @@ export async function createBooking(input: NewBooking): Promise<CreateBookingRes
           price_cents: service.price_cents,
           customer_note: input.customer_note?.trim() || null,
           source: input.source ?? "online",
+          // Messages about this booking go to the address typed in now, even when
+          // the customer (found by phone) has another one on file (005).
+          contact_email: input.email.trim(),
         })
         .select("*")
         .single<Booking>();

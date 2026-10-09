@@ -431,6 +431,25 @@ describe("rules the database enforces for everyone (even the server)", () => {
     });
   });
 
+  test("005: a booking may carry its own contact e-mail; only a plausible address is stored", async () => {
+    await as("postgres", null, async () => {
+      const id = fixtures.bookings[0].id;
+      const set = (value: string | null) => outcome(`update bookings set contact_email = $1 where id = '${id}'`, [value]);
+      assert.equal(await set("ana.nova@primer.si"), "ok");
+      assert.equal(await set(null), "ok"); // older and phone bookings have none
+      assert.equal(await set("ni-naslov"), CHECK);
+      assert.equal(await set("ana @primer.si"), CHECK);
+      assert.equal(await set(`${"a".repeat(250)}@primer.si`), CHECK);
+    });
+    // Like every bookings column: not for visitors, and a salon reads only its own.
+    await as("anon", null, async () => {
+      assert.equal(await outcome(`select contact_email from bookings limit 1`), DENIED);
+    });
+    await as("authenticated", OWNER_OTHER, async () => {
+      assert.equal(await count(`select count(*) from bookings where contact_email is not null and salon_id = '${TEST}'`), 0);
+    });
+  });
+
   test("salon values stay usable: interval, color, slug, amounts", async () => {
     await as("postgres", null, async () => {
       assert.equal(await outcome(`update salons set slot_interval_min = 0 where id = '${TEST}'`), CHECK);

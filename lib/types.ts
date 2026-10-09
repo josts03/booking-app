@@ -142,6 +142,8 @@ export interface Booking {
   customer_note: string | null;
   internal_note: string | null;
   source: string;
+  /** E-mail given with this booking; messages about it go here (005). Null: use customers.email. */
+  contact_email: string | null;
   cancel_token: Uuid;
   created_at: Timestamptz;
   updated_at: Timestamptz;
