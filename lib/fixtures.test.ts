@@ -6,7 +6,7 @@ import { isE164 } from "./phone";
 const NOW = new Date("2026-10-08T10:00:00Z");
 const f = buildFixtures(NOW);
 
-test("same `now` gives the same data (mock and seed match)", () => {
+test("same `now` gives the same data (the seed is reproducible)", () => {
   assert.deepEqual(buildFixtures(NOW), f);
 });
 

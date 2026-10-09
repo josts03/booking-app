@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { brandStyle } from "@/lib/brand";
+import { adminAccessAllowed } from "@/lib/admin-access";
 import { getCurrentSalon } from "@/lib/current-salon";
 import { SalonLogo } from "../(salon)/_components/salon-logo";
 import { AdminNav } from "./_components/admin-nav";
@@ -12,9 +13,10 @@ export const metadata: Metadata = {
 
 /**
  * Admin shell. Phone: top bar + fixed tab bar at the bottom (thumb reach).
- * Desktop: sidebar. NO LOGIN YET: /admin is open to everyone.
+ * Desktop: sidebar. NO LOGIN YET: only on a developer's machine (lib/admin-access.ts).
  */
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
+  if (!adminAccessAllowed()) notFound();
   const salon = await getCurrentSalon();
   if (!salon) notFound();
 
@@ -30,7 +32,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
       <div className="flex min-w-0 flex-col">
         <p className="bg-warning/10 px-gutter py-1 text-center text-xs font-medium text-warning">
-          Prijava še ni vklopljena: ta stran je trenutno odprta vsem.
+          Prijava še ni vklopljena: admin deluje samo na tvojem računalniku (npm run dev).
         </p>
 
         <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-line bg-surface px-gutter md:hidden">

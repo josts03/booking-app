@@ -54,7 +54,6 @@ export default async function StaffPage() {
     getServices(salon.id, { includeInactive: true }),
     getTimeOff(salon.id, now, addDays(now, 365)),
   ]);
-  const serviceName = new Map(services.map((s) => [s.id, s.name]));
 
   return (
     <div className="space-y-5">
@@ -68,10 +67,10 @@ export default async function StaffPage() {
       <ul className="grid gap-4 xl:grid-cols-2">
         {staff.map((member) => {
           const color = safeColor(member.color);
-          const performs = links
-            .filter((l) => l.staff_id === member.id)
-            .map((l) => serviceName.get(l.service_id))
-            .filter((name): name is string => !!name);
+          // In the services' display order (getServices sorts by sort_order).
+          const performs = services
+            .filter((s) => links.some((l) => l.staff_id === member.id && l.service_id === s.id))
+            .map((s) => s.name);
           const absences = timeOff.filter((t) => t.staff_id === member.id || t.staff_id === null);
 
           return (

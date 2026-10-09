@@ -1,8 +1,7 @@
 /**
  * npm run seed
  *
- * Writes supabase/seed.sql with the test salon from lib/fixtures.ts, the same
- * data the app shows today from lib/mock.ts. No keys and no network: you run
+ * Writes supabase/seed.sql with the test salon from lib/fixtures.ts. No keys and no network: you run
  * the file yourself (Supabase SQL editor, or `supabase db reset` locally).
  */
 import { writeFileSync } from "node:fs";

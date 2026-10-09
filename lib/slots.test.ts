@@ -120,10 +120,16 @@ describe("the other rules", () => {
     assert.equal(starts(slots).at(-1), "16:00"); // 16:00 + 45 + 5 = 16:50; 16:15 would end 17:05
   });
 
-  test("rule 5: steps start again from the beginning of each free part of the window", () => {
-    // A 45 + 5 min booking 9:00-9:50 leaves 9:50-17:00 free.
+  test("rule 5: slots stay on the quarter-hour grid, also right after a booking", () => {
+    // A 45 + 5 min booking 9:00-9:50 leaves 9:50-17:00 free: next slot 10:00, not 9:50.
     const slots = prostiTermini(input({ zasedeno: [{ od: local(DAY, "09:00"), do: local(DAY, "09:50") }] }));
-    assert.deepEqual(starts(slots).slice(0, 3), ["09:50", "10:05", "10:20"]);
+    assert.deepEqual(starts(slots).slice(0, 3), ["10:00", "10:15", "10:30"]);
+    assert.ok(starts(prostiTermini(input())).every((t) => ["00", "15", "30", "45"].includes(t.slice(3))));
+  });
+
+  test("rule 5: a window that starts off the grid starts at the next grid time", () => {
+    const slots = prostiTermini(input({ urniki: [{ start: "09:10", end: "11:00" }] }));
+    assert.equal(starts(slots)[0], "09:15");
   });
 
   test("rule 9: sorted by start, also with several windows given out of order", () => {
@@ -151,8 +157,8 @@ describe("the other rules", () => {
     for (const slot of slots) {
       for (const b of blocked) assert.ok(slot.do <= b.od || slot.od >= b.do, starts([slot])[0]);
     }
-    assert.ok(starts(slots).includes("11:20"));
-    assert.ok(starts(slots).includes("14:10"));
+    assert.ok(starts(slots).includes("11:30")); // first grid time after 11:20
+    assert.ok(starts(slots).includes("14:15")); // first grid time after 14:10
   });
 
   test("time off that starts the day before and ends the day after blocks the whole day", () => {

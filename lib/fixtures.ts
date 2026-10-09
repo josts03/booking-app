@@ -1,9 +1,9 @@
 /**
  * The test salon "Frizerstvo Test" and all its fake data, in ONE place.
  *
- * Used by lib/mock.ts (phase 1, in memory) and by scripts/seed.ts (the same
- * data into Supabase), so switching from the mock to the database changes
- * nothing visible. Shapes match lib/types.ts, which mirrors specs/schema.sql.
+ * Used by scripts/seed.ts (the test salon in Supabase) and by the tests. In
+ * phase 1 the app showed exactly this data from memory, so the switch to the
+ * database changed nothing visible. Shapes match lib/types.ts, which mirrors specs/schema.sql.
  *
  * A pure function of `now`: same `now`, same data. History is generated with a
  * fixed seed. Customer phones are E.164, like the database requires.

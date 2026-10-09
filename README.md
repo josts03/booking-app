@@ -3,15 +3,16 @@
 Multi-tenant platforma za naročanje strank v salonih. Več salonov, ena baza. Vsak
 salon ima svojo poddomeno (`salon.domena.si`), javno stran za naročanje in admin.
 
-**Stanje: faza 1.** Aplikacija še dela z izmišljenimi podatki (`lib/mock.ts`).
-Baza (migracije in seed) je pripravljena in testirana, a še ni priklopljena.
-Prijave v `/admin` še ni, zato **projekta ne objavljaj na javni naslov**, dokler
-prijava ni narejena.
+**Stanje: teden 6.** Aplikacija bere in piše v pravo bazo (Supabase).
+Prijave še ni (teden 7), zato **admin deluje samo na tvojem računalniku**
+(`npm run dev`); povsod drugje, tudi z `npm run start`, je `/admin` zaprt (404).
+**Projekta še ne objavljaj na javni naslov.**
 
 ## Sklad
 
 Next.js 16 (App Router), TypeScript, Tailwind CSS 4, date-fns in date-fns-tz.
-Baza: Supabase (Postgres, Auth, RLS). Kasneje: Vercel, Resend.
+Baza: Supabase (Postgres, Auth, RLS) prek `@supabase/supabase-js`, preverjanje
+vnosov z `zod`. Kasneje: Vercel, Resend.
 Samo za teste: PGlite (Postgres v pomnilniku, `devDependencies`).
 
 ## Zagon
@@ -21,10 +22,11 @@ neposredno iz TypeScripta, kar zna samo novejši Node.
 
 ```bash
 npm install
+cp .env.example .env.local   # nato vpiši ključe Supabase (glej Okolje)
 npm run dev
 ```
 
-Odpri http://localhost:3000.
+Odpri http://localhost:3000. Brez izpolnjenega `.env.local` strani s podatki ne delujejo.
 
 | Ukaz | Kaj naredi |
 |---|---|
@@ -32,7 +34,8 @@ Odpri http://localhost:3000.
 | `npm run build` | produkcijska gradnja (mora iti skozi brez napak) |
 | `npm run start` | zažene gradnjo (najprej `npm run build`) |
 | `npm run lint` | ESLint |
-| `npm test` | testi: telefon, izmišljeni podatki in **baza** (migracije, RLS, pravila) |
+| `npm test` | testi brez interneta: motor terminov, telefon, podatki in **baza** (migracije, RLS, pravila v Postgresu v pomnilniku) |
+| `npm run test:live` | testi proti **pravi** bazi iz `.env.local`: API res zavrača prepovedano, rezervacije delujejo, dve hkratni rezervaciji istega termina -> ena uspe. Kar ustvarijo, na koncu pobrišejo |
 | `npm run seed` | ustvari `supabase/seed.sql` s testnim salonom |
 
 Preverjanje tipov: `npx tsc --noEmit`. Zaženi ga po `npm run build`, ker gradnja
@@ -57,9 +60,12 @@ koren `/` stran za naročanje, na glavni domeni pa prodajna stran.
 cp .env.example .env.local
 ```
 
-`.env.local` ni v gitu. V kodi se trenutno bere samo `ROOT_DOMAIN`; ostale
-spremenljivke so pripravljene za naslednje tedne (glej komentarje v `.env.example`).
-Skrivnosti nikoli ne gredo v spremenljivko s predpono `NEXT_PUBLIC_`.
+`.env.local` ni v gitu. Za delovanje so potrebne tri vrednosti iz Supabase
+(Project Settings > API Keys): `NEXT_PUBLIC_SUPABASE_URL`,
+`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (`sb_publishable_…`) in `SUPABASE_SECRET_KEY`
+(`sb_secret_…`). Ostale spremenljivke so za naslednje tedne (glej `.env.example`).
+Skrivnosti nikoli ne gredo v spremenljivko s predpono `NEXT_PUBLIC_`; aplikacija se
+ne zažene, če je skrivni ključ pomotoma v javni spremenljivki.
 
 ## Baza
 
@@ -98,9 +104,11 @@ app/
   admin/          admin (koledar, storitve, zaposleni, stranke, analitika)
 lib/
   types.ts        tipi, 1:1 s tabelami v specs/schema.sql
-  data.ts         EDINA pot do podatkov (zdaj vrača izmišljene)
-  mock.ts         izmišljena "baza" v pomnilniku; uvaža jo SAMO data.ts
-  fixtures.ts     izmišljeni podatki testnega salona (mock in seed)
+  data.ts         EDINA pot do podatkov (Supabase)
+  supabase/       odjemalca: public.ts (javni ključ, RLS) in admin.ts (skrivni ključ, samo strežnik)
+  admin-access.ts kdo sme v admin (do prijave: samo npm run dev)
+  slots.ts        motor prostih terminov (čista funkcija, specs/slots.md)
+  fixtures.ts     izmišljeni podatki testnega salona (seed in testi)
   phone.ts        telefonske številke v zapis E.164
   analytics.ts    čista funkcija za analitiko
   format.ts       slovenski zapisi (cene, datumi, trajanje)
@@ -111,7 +119,8 @@ supabase/
 scripts/
   seed.ts         npm run seed
 tests/
-  db.test.ts      testi baze
+  db.test.ts      testi baze (Postgres v pomnilniku)
+  live/           testi proti pravi bazi (npm run test:live)
 ```
 
 Barve, tipografija in razmiki so na enem mestu: `app/globals.css`. Vsak salon
@@ -119,7 +128,8 @@ prepiše samo `--brand` (in izpeljani vrednosti) iz podatka `salons.brand_color`
 
 ## Pravila
 
-- Podatke bere in piše samo `lib/data.ts`. Ko pride Supabase, se zamenja ta datoteka.
+- Podatke bere in piše samo `lib/data.ts`. Javni podatki gredo prek javnega ključa
+  (RLS omeji, kaj se vidi), vse ostalo prek skrivnega ključa na strežniku.
 - Vsi časi v bazi so `timestamptz`, urniki so lokalni `time`. Pretvorbe pasov samo z `date-fns-tz`.
 - Cena se vedno bere iz baze, nikoli iz zahteve. Rezervacije nastajajo samo v strežniški akciji.
 - Telefoni strank so v bazi v zapisu E.164 (`+38640123456`), pretvorba z `lib/phone.ts`.

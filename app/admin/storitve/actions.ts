@@ -1,6 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
+import { adminAccessAllowed } from "@/lib/admin-access";
 import { getCurrentSalon } from "@/lib/current-salon";
 import { createService, updateService } from "@/lib/data";
 
@@ -18,9 +20,35 @@ function text(formData: FormData, key: string): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+/** "32" or "32,50" (or "32.50") euros -> cents. */
+const euros = z
+  .string()
+  .regex(/^\d{1,5}([.,]\d{1,2})?$/, "Npr. 32 ali 32,50.")
+  .transform((value) => Math.round(Number.parseFloat(value.replace(",", ".")) * 100));
+
+const wholeMinutes = (min: number, max: number) =>
+  z
+    .string()
+    .regex(/^\d{1,4}$/, `${min} do ${max} min.`)
+    .transform(Number)
+    .pipe(z.number().int().min(min, `${min} do ${max} min.`).max(max, `${min} do ${max} min.`));
+
+/** Same limits as the database (services checks in 001 and 002). */
+const ServiceSchema = z.object({
+  id: z.union([z.uuid(), z.literal("")]),
+  name: z.string().min(1, "Vpišite ime.").max(80, "Ime je predolgo."),
+  category: z.string().max(40, "Kategorija je predolga."),
+  duration: wholeMinutes(5, 600),
+  buffer: wholeMinutes(0, 240),
+  price: euros,
+  is_active: z.enum(["on", ""]),
+});
+
+const FIELD_NAMES: ServiceField[] = ["name", "category", "duration", "buffer", "price"];
+
 /**
  * Creates (no `id`) or updates a service of the current salon.
- * TODO: admin login check, Zod validation (weeks 6-7).
+ * TODO(week 7): instead of adminAccessAllowed(), check the logged-in user.
  */
 export async function saveService(
   _previous: ServiceFormState,
@@ -36,40 +64,43 @@ export async function saveService(
     is_active: formData.get("is_active") === "on" ? "on" : "",
   };
 
-  const errors: Partial<Record<ServiceField, string>> = {};
-  if (!values.name) errors.name = "Vpišite ime.";
-  else if (values.name.length > 80) errors.name = "Ime je predolgo.";
-  if (values.category.length > 40) errors.category = "Kategorija je predolga.";
+  // A server action can be called without opening the page, so it checks itself.
+  if (!adminAccessAllowed()) {
+    return { message: "Nimate dostopa.", values };
+  }
 
-  const duration = /^\d+$/.test(values.duration) ? Number(values.duration) : NaN;
-  if (!(duration >= 5 && duration <= 600)) errors.duration = "5 do 600 min.";
-
-  const buffer = /^\d+$/.test(values.buffer) ? Number(values.buffer) : NaN;
-  if (!(buffer >= 0 && buffer <= 240)) errors.buffer = "0 do 240 min.";
-
-  const priceOk = /^\d+([.,]\d{1,2})?$/.test(values.price);
-  const priceCents = priceOk ? Math.round(parseFloat(values.price.replace(",", ".")) * 100) : NaN;
-  if (!(priceCents >= 0 && priceCents <= 1_000_000)) errors.price = "Npr. 32 ali 32,50.";
-
-  if (Object.keys(errors).length > 0) return { errors, values };
+  const parsed = ServiceSchema.safeParse(values);
+  if (!parsed.success) {
+    const fieldErrors = z.flattenError(parsed.error).fieldErrors as Partial<Record<string, string[]>>;
+    const errors: Partial<Record<ServiceField, string>> = {};
+    for (const name of FIELD_NAMES) {
+      const message = fieldErrors[name]?.[0];
+      if (message) errors[name] = message;
+    }
+    if (Object.keys(errors).length === 0) {
+      // Only the hidden id was wrong: the form was tampered with or is stale.
+      return { message: "Storitve ni mogoče najti. Osvežite stran.", values };
+    }
+    return { errors, values };
+  }
 
   const salon = await getCurrentSalon();
   if (!salon) return { message: "Salona ni mogoče najti.", values };
 
   const input = {
-    name: values.name,
-    category: values.category || null,
-    duration_min: duration,
-    buffer_after_min: buffer,
-    price_cents: priceCents,
-    is_active: values.is_active === "on",
+    name: parsed.data.name,
+    category: parsed.data.category || null,
+    duration_min: parsed.data.duration,
+    buffer_after_min: parsed.data.buffer,
+    price_cents: parsed.data.price,
+    is_active: parsed.data.is_active === "on",
   };
-  const result = values.id
-    ? await updateService(salon.id, values.id, input)
+  const result = parsed.data.id
+    ? await updateService(salon.id, parsed.data.id, input)
     : await createService(salon.id, input);
 
   if (!result.ok) return { message: result.error, values };
 
   revalidatePath("/admin", "layout");
-  return { ok: true, message: values.id ? "Shranjeno." : "Storitev je dodana.", values };
+  return { ok: true, message: parsed.data.id ? "Shranjeno." : "Storitev je dodana.", values };
 }

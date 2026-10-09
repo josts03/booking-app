@@ -8,7 +8,7 @@ import { getCurrentSalon } from "@/lib/current-salon";
 import {
   getBooking,
   getBookings,
-  getCustomers,
+  getCustomersByIds,
   getServices,
   getStaff,
   getStaffHours,
@@ -65,13 +65,19 @@ export default async function CalendarPage({ searchParams }: PageProps<"/admin/k
   const rangeStart = fromZonedTime(`${days[0]}T00:00:00`, tz);
   const rangeEnd = fromZonedTime(`${format(addDays(parseISO(days[days.length - 1]), 1), DAY_FORMAT)}T00:00:00`, tz);
 
-  const [staffList, services, bookings, timeOff, hours, customers] = await Promise.all([
+  const [staffList, services, bookings, timeOff, hours, openBooking] = await Promise.all([
     getStaff(salon.id, { includeInactive: true }),
     getServices(salon.id, { includeInactive: true }),
     getBookings(salon.id, rangeStart, rangeEnd),
     getTimeOff(salon.id, rangeStart, rangeEnd),
     getStaffHours(salon.id),
-    getCustomers(salon.id),
+    // The booking whose details are open (it may lie outside the shown range).
+    param("booking") ? getBooking(salon.id, param("booking")!) : Promise.resolve(null),
+  ]);
+  // Only the customers of the bookings in view, not the whole customer list.
+  const customers = await getCustomersByIds(salon.id, [
+    ...bookings.map((b) => b.customer_id),
+    ...(openBooking ? [openBooking.customer_id] : []),
   ]);
 
   const activeStaff = staffList.filter((s) => s.is_active);
@@ -80,7 +86,7 @@ export default async function CalendarPage({ searchParams }: PageProps<"/admin/k
   const visibleIds = new Set(visibleStaff.map((s) => s.id));
 
   const serviceById = new Map(services.map((s) => [s.id, s]));
-  const customerById = new Map(customers.map((c) => [c.customer.id, c.customer]));
+  const customerById = new Map(customers.map((c) => [c.id, c]));
   const staffById = new Map(staffList.map((s) => [s.id, s]));
 
   const state = { view, date, staff: filterStaff?.id };
@@ -156,8 +162,6 @@ export default async function CalendarPage({ searchParams }: PageProps<"/admin/k
           lanes: visibleStaff.map((member) => buildLane(member, day)),
         }));
 
-  // ---- the open booking (details sheet) ----
-  const openBooking = param("booking") ? await getBooking(salon.id, param("booking")!) : null;
 
   // ---- toolbar ----
   const step = view === "day" ? 1 : 7;

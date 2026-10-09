@@ -17,15 +17,17 @@
  *   2  windows are local time in casovniPas, turned into instants with date-fns-tz
  *   3  time off is cut out of the windows
  *   4  bookings are cut out of the windows
- *   5  in every free part, step by korakMin from the start of that part
+ *   5  slots lie on the clock grid of korakMin (15 -> :00, :15, :30, :45), from
+ *      the first grid time inside each free part (decided 9. 10. 2026: easier
+ *      for customers than times like 10:40 right after a booking)
  *   6  a slot needs duration + buffer completely inside the free part
  *   7  no slot starts before zdaj + najkrajsaNajavaMin
  *   8  a slot's `do` is start + duration, WITHOUT the buffer (what the customer sees)
  *   9  sorted by start
  *   10 time zone conversions only with date-fns-tz
  */
-import { addMinutes } from "date-fns";
-import { fromZonedTime } from "date-fns-tz";
+import { addMinutes, addSeconds } from "date-fns";
+import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 
 export type Okno = { start: string; end: string }; // "09:00", "17:00"
 export type Interval = { od: Date; do: Date };
@@ -92,6 +94,13 @@ function toInstant(dan: string, time: string, timeZone: string): Date {
   return instant;
 }
 
+/** Rule 5: the first time at or after `from` that lies on the local clock grid of `stepMin`. */
+function firstOnGrid(from: Date, timeZone: string, stepMin: number): Date {
+  const [h, m, s] = formatInTimeZone(from, timeZone, "H:m:s").split(":").map(Number);
+  const rest = (h * 3600 + m * 60 + s) % (stepMin * 60);
+  return rest === 0 ? from : addSeconds(from, stepMin * 60 - rest);
+}
+
 /** Rules 3 and 4: the parts of `window` that no blocked interval touches, in order. */
 function freeParts(window: Interval, blocked: Interval[]): Interval[] {
   let parts = [window];
@@ -135,7 +144,7 @@ export function prostiTermini(v: VhodTerminov): Interval[] {
     for (const part of freeParts(window, blocked)) {
       // Rule 5 and 6. Steps are absolute minutes, so they stay right on DST days.
       for (
-        let start = part.od;
+        let start = firstOnGrid(part.od, v.casovniPas, v.korakMin);
         addMinutes(start, needed).getTime() <= part.do.getTime();
         start = addMinutes(start, v.korakMin)
       ) {

@@ -176,7 +176,7 @@ describe("migrations and seed", () => {
     assert.equal(await count(`select count(*) from staff_hours ${where}`), fixtures.staffHours.length);
     assert.equal(await count(`select count(*) from customers ${where}`), fixtures.customers.length);
     assert.equal(await count(`select count(*) from bookings ${where}`), fixtures.bookings.length);
-    // The database's generated period (booking + buffer) equals the one the mock computes.
+    // The database's generated period (booking + buffer) equals the one lib/fixtures.ts computes.
     for (const booking of fixtures.bookings.filter((b) => b.buffer_min > 0).slice(0, 5)) {
       const [row] = await rows(
         `select lower(period) = $2::timestamptz and upper(period) = $3::timestamptz as same

@@ -28,7 +28,7 @@ Vercel, Resend za e-pošto. Brez dodatnih knjižnic brez vprašanja.
 - Spremembe sheme samo kot nova datoteka v supabase/migrations/, ista sprememba
   v specs/schema.sql in test v tests/db.test.ts.
 - Telefoni strank so v bazi v zapisu E.164 (+38640123456). Pretvorba samo z lib/phone.ts.
-- Izmišljeni podatki so samo v lib/fixtures.ts (mock in seed jih delita).
+- Izmišljeni podatki so samo v lib/fixtures.ts (seed in testi jih delita).
 - lib/slots.ts je čista funkcija. Ne bere baze in ne kliče Date.now().
 
 ## Slog

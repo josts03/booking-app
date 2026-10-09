@@ -151,7 +151,7 @@ export interface Booking {
 
 // ============ app types (not tables) ============
 // Inputs and outputs of the functions in lib/data.ts. They keep the same shape
-// after the mock is replaced by Supabase.
+// with Supabase (they did with the phase-1 mock too).
 
 /** A bookable start time. `ends_at` is starts_at + duration (without buffer). */
 export interface FreeSlot {

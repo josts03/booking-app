@@ -24,11 +24,13 @@ export default async function AnalyticsPage({ searchParams }: PageProps<"/admin/
 
   const [bookings, staff, hours, timeOff] = await Promise.all([
     getBookings(salon.id, from, now),
-    getStaff(salon.id),
+    getStaff(salon.id, { includeInactive: true }),
     getStaffHours(salon.id),
     getTimeOff(salon.id, from, now),
   ]);
-  const activeIds = new Set(staff.map((s) => s.id));
+  // Admin screen: all staff via the admin client, then the active ones. (The
+  // public reading would hide staff of a salon that is not bookable right now.)
+  const activeIds = new Set(staff.filter((s) => s.is_active).map((s) => s.id));
 
   const stats = computeAnalytics({
     bookings,

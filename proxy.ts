@@ -1,55 +1,36 @@
 /**
- * Reads the subdomain from the Host header and passes it on as the
- * `x-salon-slug` request header. Server code reads it with `headers()`.
+ * Runs before every page and server action (see `config.matcher`).
  *
- *   frizerstvo-test.domena.si -> "frizerstvo-test"
- *   test.localhost:3000       -> "test"
- *   localhost:3000, domena.si, www.domena.si -> "test" (no subdomain, default)
- *
- * With a subdomain, "/" is rewritten to the salon's booking page (/rezervacija).
- *
- * Set ROOT_DOMAIN (e.g. "domena.si") in production. Without it, any host with
- * three or more labels is assumed to have the subdomain in front, which is
- * wrong for hosts like "my-app.vercel.app".
+ * - Closes the admin outside `npm run dev` until login exists (week 7), the
+ *   same rule as lib/admin-access.ts.
+ * - Passes the salon slug from the subdomain on as the `x-salon-slug` request
+ *   header (lib/tenant.ts). Server code takes the salon from the Host header
+ *   itself (lib/current-salon.ts), so it does not depend on this header.
+ * - On a salon's own subdomain, "/" is the booking page (/rezervacija).
  *
  * Next.js 16 calls this file convention "proxy" (it was "middleware" before).
  */
 import { NextResponse, type NextRequest } from "next/server";
+import { salonSlugFromHost, subdomainOf } from "./lib/tenant";
 
-const DEFAULT_SLUG = "test";
-const SLUG_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
-
-function getSubdomain(host: string): string | null {
-  const hostname = host.split(":")[0].toLowerCase();
-  const rootDomain = process.env.ROOT_DOMAIN?.toLowerCase();
-
-  let subdomain: string;
-  if (rootDomain) {
-    if (!hostname.endsWith(`.${rootDomain}`)) return null;
-    subdomain = hostname.slice(0, -(rootDomain.length + 1));
-  } else if (hostname.endsWith(".localhost")) {
-    subdomain = hostname.slice(0, -".localhost".length);
-  } else {
-    const labels = hostname.split(".");
-    if (labels.length < 3) return null;
-    subdomain = labels.slice(0, -2).join(".");
-  }
-
-  if (subdomain === "www" || !SLUG_PATTERN.test(subdomain)) return null;
-  return subdomain;
-}
+/** "/admin", "/admin/...", and Next's transport URLs such as "/admin.rsc". */
+const ADMIN_PATH = /^\/admin(?:[/.]|$)/;
 
 export function proxy(request: NextRequest) {
-  const subdomain = getSubdomain(request.headers.get("host") ?? "");
-  const slug = subdomain ?? DEFAULT_SLUG;
+  const path = request.nextUrl.pathname;
+  if (ADMIN_PATH.test(path) && process.env.NODE_ENV !== "development") {
+    return new NextResponse(null, { status: 404 });
+  }
 
-  // set() overwrites any x-salon-slug the client sent, so it cannot be spoofed.
+  const host = request.headers.get("host");
+
+  // set() overwrites any x-salon-slug the client sent.
   const requestHeaders = new Headers(request.headers);
-  requestHeaders.set("x-salon-slug", slug);
+  requestHeaders.set("x-salon-slug", salonSlugFromHost(host));
 
   // On a salon's own subdomain the root is the booking page. On the main
   // domain "/" stays the marketing site. /rezervacija works on both.
-  if (subdomain && request.nextUrl.pathname === "/") {
+  if (subdomainOf(host ?? "") && path === "/") {
     const url = request.nextUrl.clone();
     url.pathname = "/rezervacija";
     return NextResponse.rewrite(url, { request: { headers: requestHeaders } });
@@ -59,6 +40,11 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // Skip static assets and files with an extension.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\..*).*)"],
+  // Everything except Next's static files and files with a static-asset
+  // extension. Paths with other dots must still match: Next 16 serves pages
+  // also as "<page>.rsc" and "<page>.segments/...", and those must not skip
+  // the admin check above.
+  matcher: [
+    "/((?!_next/static|_next/image|favicon\\.ico|.*\\.(?:ico|png|jpe?g|gif|webp|avif|svg|css|js|map|txt|xml|webmanifest|woff2?|ttf|otf)$).*)",
+  ],
 };

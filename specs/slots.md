@@ -30,7 +30,9 @@ export function prostiTermini(v: VhodTerminov): Interval[];
 2. Lokalni čas okna pretvori v absolutni čas v `casovniPas`, ne v času strežnika.
 3. Od okna odštej vse `odsotnosti`.
 4. Od okna odštej vse `zasedeno`.
-5. Po preostalih oknih koračaj po `korakMin` od začetka okna.
+5. Termini so na mreži ure po `korakMin` (pri 15: :00, :15, :30, :45). V vsakem
+   preostalem oknu je prvi termin prva ura na mreži znotraj okna (odločitev
+   9. 10. 2026: stranka se lažje odloči kot pri urah, kot je 10:40).
 6. Termin obdrži samo, če `trajanjeMin + cistilniCasMin` v celoti pade v okno
    in se ne prekriva z ničemer.
 7. Odvrzi termine, kjer je `zacetek < zdaj + najkrajsaNajavaMin`.
