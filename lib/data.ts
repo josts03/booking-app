@@ -17,10 +17,11 @@
  *                                 busy times (start, end, buffer; no customer data)
  *   everything else               admin
  *
- * Until login exists (week 7) the admin screens are only reachable on a
- * developer's machine, see lib/admin-access.ts. Every admin-only function
- * below checks that itself (adminOnly), because a page layout's check can be
- * skipped by Next.js on partial renders. Week 7 puts the login check there.
+ * Admin-only functions check themselves (adminOnly) that the signed-in user is
+ * in salon_users for exactly the salon they are asked about, because a page
+ * layout's check can be skipped by Next.js on partial renders, and a server
+ * action can be called without its page. Pages and actions also check first
+ * (lib/admin-access.ts), so the user gets a friendly page instead of an error.
  *
  * Errors: a failed query is logged (code and message, never row values) and
  * thrown; error.tsx files show a friendly sentence. createBooking instead
@@ -31,7 +32,7 @@ import { cache } from "react";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { addDays, addMinutes, format, getDay, parseISO } from "date-fns";
 import { fromZonedTime } from "date-fns-tz";
-import { adminAccessAllowed } from "./admin-access";
+import { getSignedInUser } from "./auth";
 import { localDay } from "./format";
 import { isE164, phoneSearchDigits } from "./phone";
 import { prostiTermini, type Interval } from "./slots";
@@ -79,15 +80,37 @@ function fail(context: string, error: Pick<PostgrestError, "code" | "message">):
   throw new Error(`Database query failed: ${context}`);
 }
 
+export type SalonRole = "owner" | "staff";
+
+/**
+ * The role of a user in a salon (salon_users), or null if they are not a
+ * member. This IS the access check, so it needs no access itself. Cached per
+ * request: a page with many queries asks the database once.
+ */
+export const getSalonRole = cache(async (salonId: Uuid, userId: Uuid): Promise<SalonRole | null> => {
+  if (!isUuid(salonId) || !isUuid(userId)) return null;
+  const row = await must(
+    "getSalonRole",
+    adminDb()
+      .from("salon_users")
+      .select("role")
+      .eq("salon_id", salonId)
+      .eq("user_id", userId)
+      .maybeSingle<{ role: SalonRole }>(),
+  );
+  return row?.role ?? null;
+});
+
 /**
  * Admin-only data: customers, bookings, absences with reasons, writes. Refuses
- * when admin access is not allowed (lib/admin-access.ts; week 7: the login).
+ * unless the signed-in user is a member of `salonId`, so even a caller that
+ * passes another salon's id gets nothing.
  */
-function adminOnly(context: string): void {
-  if (!adminAccessAllowed()) {
-    console.error(`[data] ${context} refused: no admin access`);
-    throw new Error(`No admin access: ${context}`);
-  }
+async function adminOnly(salonId: Uuid, context: string): Promise<void> {
+  const user = await getSignedInUser();
+  if (user && (await getSalonRole(salonId, user.id))) return;
+  console.error(`[data] ${context} refused: no admin access`);
+  throw new Error(`No admin access: ${context}`);
 }
 
 type QueryResult<T> = { data: T | null; error: PostgrestError | null };
@@ -219,7 +242,7 @@ export async function getStaff(
  * Admin only: `bookings` has no policy for anon.
  */
 export async function getBookings(salonId: Uuid, from: Date, to: Date): Promise<Booking[]> {
-  adminOnly("getBookings");
+  await adminOnly(salonId, "getBookings");
   if (!isUuid(salonId)) return [];
   return selectAll("getBookings", (first, last) =>
     adminDb()
@@ -250,7 +273,7 @@ export async function getBookingByCancelToken(token: string): Promise<Booking | 
 // ---------- admin reads ----------
 
 export async function getStaffHours(salonId: Uuid): Promise<StaffHours[]> {
-  adminOnly("getStaffHours");
+  await adminOnly(salonId, "getStaffHours");
   if (!isUuid(salonId)) return [];
   return selectAll("getStaffHours", (from, to) =>
     adminDb()
@@ -267,7 +290,7 @@ export async function getStaffHours(salonId: Uuid): Promise<StaffHours[]> {
 }
 
 export async function getStaffServices(salonId: Uuid): Promise<StaffService[]> {
-  adminOnly("getStaffServices");
+  await adminOnly(salonId, "getStaffServices");
   if (!isUuid(salonId)) return [];
   return selectAll("getStaffServices", (from, to) =>
     adminDb()
@@ -283,7 +306,7 @@ export async function getStaffServices(salonId: Uuid): Promise<StaffService[]> {
 
 /** Time off that overlaps [from, to). staff_id null means the whole salon. */
 export async function getTimeOff(salonId: Uuid, from: Date, to: Date): Promise<TimeOff[]> {
-  adminOnly("getTimeOff");
+  await adminOnly(salonId, "getTimeOff");
   if (!isUuid(salonId)) return [];
   return selectAll("getTimeOff", (first, last) =>
     adminDb()
@@ -301,7 +324,7 @@ export async function getTimeOff(salonId: Uuid, from: Date, to: Date): Promise<T
 
 /** One booking of this salon by id (admin only; visitors use the cancel_token). */
 export async function getBooking(salonId: Uuid, bookingId: Uuid): Promise<Booking | null> {
-  adminOnly("getBooking");
+  await adminOnly(salonId, "getBooking");
   if (!isUuid(salonId) || !isUuid(bookingId)) return null;
   return must(
     "getBooking",
@@ -310,7 +333,7 @@ export async function getBooking(salonId: Uuid, bookingId: Uuid): Promise<Bookin
 }
 
 export async function getCustomer(salonId: Uuid, customerId: Uuid): Promise<Customer | null> {
-  adminOnly("getCustomer");
+  await adminOnly(salonId, "getCustomer");
   if (!isUuid(salonId) || !isUuid(customerId)) return null;
   return must(
     "getCustomer",
@@ -320,7 +343,7 @@ export async function getCustomer(salonId: Uuid, customerId: Uuid): Promise<Cust
 
 /** Only the customers with these ids (e.g. the ones in the calendar view). */
 export async function getCustomersByIds(salonId: Uuid, customerIds: Uuid[]): Promise<Customer[]> {
-  adminOnly("getCustomersByIds");
+  await adminOnly(salonId, "getCustomersByIds");
   const ids = [...new Set(customerIds.filter(isUuid))];
   if (!isUuid(salonId) || ids.length === 0) return [];
   const rows: Customer[] = [];
@@ -354,7 +377,7 @@ export async function getCustomers(
   salonId: Uuid,
   options: { query?: string } = {},
 ): Promise<CustomerSummary[]> {
-  adminOnly("getCustomers");
+  await adminOnly(salonId, "getCustomers");
   if (!isUuid(salonId)) return [];
   const query = fold(options.query?.trim() ?? "");
   const phoneQueries = phoneSearchDigits(query);
@@ -425,7 +448,7 @@ export async function getCustomers(
 
 /** All bookings of one customer, newest first, all statuses. */
 export async function getCustomerBookings(salonId: Uuid, customerId: Uuid): Promise<Booking[]> {
-  adminOnly("getCustomerBookings");
+  await adminOnly(salonId, "getCustomerBookings");
   if (!isUuid(salonId) || !isUuid(customerId)) return [];
   return selectAll("getCustomerBookings", (from, to) =>
     adminDb()
@@ -473,7 +496,7 @@ function serviceColumns(input: ServiceInput) {
 }
 
 export async function createService(salonId: Uuid, input: ServiceInput): Promise<SaveServiceResult> {
-  adminOnly("createService");
+  await adminOnly(salonId, "createService");
   if (!isUuid(salonId) || !validService(input)) return { ok: false, error: SERVICE_INVALID };
   const db = adminDb();
 
@@ -510,7 +533,7 @@ export async function updateService(
   serviceId: Uuid,
   input: ServiceInput,
 ): Promise<SaveServiceResult> {
-  adminOnly("updateService");
+  await adminOnly(salonId, "updateService");
   if (!isUuid(salonId) || !isUuid(serviceId) || !validService(input)) {
     return { ok: false, error: SERVICE_INVALID };
   }

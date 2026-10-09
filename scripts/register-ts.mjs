@@ -25,6 +25,12 @@ registerHooks({
     if (specifier === "server-only") {
       return { url: "data:text/javascript,export {};", shortCircuit: true };
     }
+    // "next/headers" and similar: the next package has no exports map, so Node
+    // needs the file name ("next/headers.js"). Outside a request they throw,
+    // which lib/auth.ts treats as "nobody is signed in".
+    if (/^next\/[a-z-]+$/.test(specifier)) {
+      return nextResolve(`${specifier}.js`, context);
+    }
     let base = null;
     if (specifier.startsWith("@/")) {
       base = new URL(specifier.slice(2), root);

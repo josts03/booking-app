@@ -2,8 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { adminAccessAllowed } from "@/lib/admin-access";
-import { getCurrentSalon } from "@/lib/current-salon";
+import { getAdminAccess, NO_ADMIN_ACCESS } from "@/lib/admin-access";
 import { createService, updateService } from "@/lib/data";
 
 export type ServiceField = "name" | "category" | "duration" | "buffer" | "price";
@@ -47,8 +46,8 @@ const ServiceSchema = z.object({
 const FIELD_NAMES: ServiceField[] = ["name", "category", "duration", "buffer", "price"];
 
 /**
- * Creates (no `id`) or updates a service of the current salon.
- * TODO(week 7): instead of adminAccessAllowed(), check the logged-in user.
+ * Creates (no `id`) or updates a service of the current salon. Only for a
+ * signed-in member of this salon (lib/admin-access.ts).
  */
 export async function saveService(
   _previous: ServiceFormState,
@@ -65,9 +64,11 @@ export async function saveService(
   };
 
   // A server action can be called without opening the page, so it checks itself.
-  if (!adminAccessAllowed()) {
-    return { message: "Nimate dostopa.", values };
+  const access = await getAdminAccess();
+  if (!access.ok) {
+    return { message: NO_ADMIN_ACCESS, values };
   }
+  const { salon } = access;
 
   const parsed = ServiceSchema.safeParse(values);
   if (!parsed.success) {
@@ -83,9 +84,6 @@ export async function saveService(
     }
     return { errors, values };
   }
-
-  const salon = await getCurrentSalon();
-  if (!salon) return { message: "Salona ni mogoče najti.", values };
 
   const input = {
     name: parsed.data.name,

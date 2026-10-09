@@ -9,9 +9,11 @@
     "lint": "eslint",
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/register-ts.mjs --test \"lib/**/*.test.ts\" \"tests/**/*.test.ts\"",
     "seed": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/register-ts.mjs scripts/seed.ts",
+    "salon-user": "node --env-file=.env.local --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/register-ts.mjs scripts/add-salon-user.ts",
     "test:live": "node --env-file=.env.local --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/register-ts.mjs --test --test-isolation=none \"tests/live/*.live-test.ts\""
   },
   "dependencies": {
+    "@supabase/ssr": "0.12.7",
     "@supabase/supabase-js": "2.117.3",
     "date-fns": "^4.4.0",
     "date-fns-tz": "^3.2.0",

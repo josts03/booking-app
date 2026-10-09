@@ -201,8 +201,7 @@ describe("lib/data.ts against the live database", () => {
     assert.deepEqual(await getFreeSlots({ ...q, day: "9999-12-31" }), []);
   });
 
-  test("admin-only data refuses to load outside admin access (no npm run dev here)", async () => {
-    assert.notEqual(process.env.NODE_ENV, "development");
+  test("admin-only data refuses to load without a signed-in member (no session in a test)", async () => {
     await assert.rejects(() => getCustomers(SALON), /No admin access/);
     await assert.rejects(() => getBookings(SALON, new Date(0), new Date()), /No admin access/);
     await assert.rejects(

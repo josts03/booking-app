@@ -1,8 +1,10 @@
 /**
  * Runs before every page and server action (see `config.matcher`).
  *
- * - Closes the admin outside `npm run dev` until login exists (week 7), the
- *   same rule as lib/admin-access.ts.
+ * - Admin and the new-password page: refreshes the Supabase session cookie
+ *   before the page renders (lib/supabase/session-client.ts). Without a valid
+ *   session, /admin goes to /prijava. This is only the fast first check; the
+ *   real one is on the server next to the data (lib/admin-access.ts).
  * - Passes the salon slug from the subdomain on as the `x-salon-slug` request
  *   header (lib/tenant.ts). Server code takes the salon from the Host header
  *   itself (lib/current-salon.ts), so it does not depend on this header.
@@ -11,19 +13,43 @@
  * Next.js 16 calls this file convention "proxy" (it was "middleware" before).
  */
 import { NextResponse, type NextRequest } from "next/server";
+import { safeNextPath, ADMIN_HOME } from "./lib/safe-next";
+import { refreshSession, type SessionRefresh } from "./lib/supabase/session-client";
 import { salonSlugFromHost, subdomainOf } from "./lib/tenant";
 
 /** "/admin", "/admin/...", and Next's transport URLs such as "/admin.rsc". */
 const ADMIN_PATH = /^\/admin(?:[/.]|$)/;
+/** Pages that need a fresh session but are not the admin (signed in by a reset link). */
+const SESSION_PATH = /^\/novo-geslo(?:[/.]|$)/;
 
-export function proxy(request: NextRequest) {
+/** Puts the refreshed session cookies, and the headers that keep CDNs from caching them, on a response. */
+function withSession(response: NextResponse, session: SessionRefresh | null): NextResponse {
+  if (!session) return response;
+  for (const { name, value, options } of session.cookies) response.cookies.set(name, value, options);
+  for (const [key, value] of Object.entries(session.headers)) response.headers.set(key, value);
+  return response;
+}
+
+export async function proxy(request: NextRequest) {
   const path = request.nextUrl.pathname;
-  if (ADMIN_PATH.test(path) && process.env.NODE_ENV !== "development") {
-    return new NextResponse(null, { status: 404 });
+  const isAdmin = ADMIN_PATH.test(path);
+
+  let session: SessionRefresh | null = null;
+  if (isAdmin || SESSION_PATH.test(path)) {
+    session = await refreshSession(request);
+    if (isAdmin && !session.signedIn) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/prijava";
+      url.search = "";
+      const next = safeNextPath(path + request.nextUrl.search);
+      if (next !== ADMIN_HOME) url.searchParams.set("next", next);
+      return withSession(NextResponse.redirect(url), session);
+    }
   }
 
   const host = request.headers.get("host");
 
+  // Built after refreshSession(), so the page sees the refreshed cookies.
   // set() overwrites any x-salon-slug the client sent.
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-salon-slug", salonSlugFromHost(host));
@@ -36,7 +62,7 @@ export function proxy(request: NextRequest) {
     return NextResponse.rewrite(url, { request: { headers: requestHeaders } });
   }
 
-  return NextResponse.next({ request: { headers: requestHeaders } });
+  return withSession(NextResponse.next({ request: { headers: requestHeaders } }), session);
 }
 
 export const config = {
