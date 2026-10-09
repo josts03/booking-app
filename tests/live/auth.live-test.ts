@@ -115,3 +115,58 @@ describe("salon membership (who may open /admin of a salon)", () => {
     assert.equal(await getSalonRole(SALON, "ni-uuid"), null);
   });
 });
+
+describe("password reset link (what lib/auth.ts setNewPassword relies on)", () => {
+  const plainClient = () =>
+    createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    });
+  const email = () => `live-test+${run}@example.com`;
+
+  /** The token_hash a reset e-mail would contain (generateLink sends no e-mail). */
+  async function resetToken(): Promise<string> {
+    const { data, error } = await adminDb().auth.admin.generateLink({ type: "recovery", email: email() });
+    assert.equal(error, null);
+    return data.properties!.hashed_token;
+  }
+
+  test("the token signs in once, as an e-mail link session, and sets a new password", async () => {
+    const token = await resetToken();
+    const client = plainClient();
+    const verified = await client.auth.verifyOtp({ type: "recovery", token_hash: token });
+    assert.equal(verified.error, null);
+
+    // lib/auth.ts accepts a token-less retry only for such a session.
+    const { data } = await client.auth.getClaims();
+    const methods = (data?.claims.amr ?? []).map((entry) => (typeof entry === "object" ? entry.method : entry));
+    assert.ok(
+      methods.some((method) => ["recovery", "otp", "magiclink"].includes(method)),
+      `amr methods: ${methods.join(", ")}`,
+    );
+
+    const newPassword = `${password}-novo`;
+    assert.equal((await client.auth.updateUser({ password: newPassword })).error, null);
+    const withNew = await plainClient().auth.signInWithPassword({ email: email(), password: newPassword });
+    assert.equal(withNew.error, null);
+    const withOld = await plainClient().auth.signInWithPassword({ email: email(), password });
+    assert.equal(withOld.error?.code, "invalid_credentials");
+
+    // Used once: the same link no longer works.
+    const again = await plainClient().auth.verifyOtp({ type: "recovery", token_hash: token });
+    assert.ok(again.error, "a reset token must work only once");
+  });
+
+  test("a password session is not an e-mail link session (no password change without the link)", async () => {
+    const client = plainClient();
+    const signed = await client.auth.signInWithPassword({ email: email(), password: `${password}-novo` });
+    assert.equal(signed.error, null);
+    const { data } = await client.auth.getClaims();
+    const methods = (data?.claims.amr ?? []).map((entry) => (typeof entry === "object" ? entry.method : entry));
+    assert.deepEqual(methods, ["password"]);
+  });
+
+  test("a made-up token does not sign in", async () => {
+    const { error } = await plainClient().auth.verifyOtp({ type: "recovery", token_hash: "0".repeat(56) });
+    assert.ok(error);
+  });
+});

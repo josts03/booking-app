@@ -1,10 +1,10 @@
 /**
  * Runs before every page and server action (see `config.matcher`).
  *
- * - Admin and the new-password page: refreshes the Supabase session cookie
- *   before the page renders (lib/supabase/session-client.ts). Without a valid
- *   session, /admin goes to /prijava. This is only the fast first check; the
- *   real one is on the server next to the data (lib/admin-access.ts).
+ * - Admin: refreshes the Supabase session cookie before the page renders
+ *   (lib/supabase/session-client.ts). Without a valid session, /admin goes to
+ *   /prijava. This is only the fast first check; the real one is on the server
+ *   next to the data (lib/admin-access.ts).
  * - Passes the salon slug from the subdomain on as the `x-salon-slug` request
  *   header (lib/tenant.ts). Server code takes the salon from the Host header
  *   itself (lib/current-salon.ts), so it does not depend on this header.
@@ -19,8 +19,6 @@ import { salonSlugFromHost, subdomainOf } from "./lib/tenant";
 
 /** "/admin", "/admin/...", and Next's transport URLs such as "/admin.rsc". */
 const ADMIN_PATH = /^\/admin(?:[/.]|$)/;
-/** Pages that need a fresh session but are not the admin (signed in by a reset link). */
-const SESSION_PATH = /^\/novo-geslo(?:[/.]|$)/;
 
 /** Puts the refreshed session cookies, and the headers that keep CDNs from caching them, on a response. */
 function withSession(response: NextResponse, session: SessionRefresh | null): NextResponse {
@@ -32,12 +30,10 @@ function withSession(response: NextResponse, session: SessionRefresh | null): Ne
 
 export async function proxy(request: NextRequest) {
   const path = request.nextUrl.pathname;
-  const isAdmin = ADMIN_PATH.test(path);
-
   let session: SessionRefresh | null = null;
-  if (isAdmin || SESSION_PATH.test(path)) {
+  if (ADMIN_PATH.test(path)) {
     session = await refreshSession(request);
-    if (isAdmin && !session.signedIn) {
+    if (!session.signedIn) {
       const url = request.nextUrl.clone();
       url.pathname = "/prijava";
       url.search = "";

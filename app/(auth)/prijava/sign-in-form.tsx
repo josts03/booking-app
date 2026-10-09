@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState } from "react";
 import { buttonPrimary } from "../../(salon)/_components/ui";
 import { signInAction, type SignInState } from "../actions";
@@ -28,6 +29,9 @@ export function SignInForm({ next }: { next: string }) {
       <Field label="Geslo" name="password" error={errors.password}>
         <input {...inputProps("password", errors.password)} type="password" autoComplete="current-password" required />
       </Field>
+      <Link href="/pozabljeno-geslo" className="-mt-2 inline-flex min-h-11 items-center text-sm font-medium text-brand-ink underline">
+        Ste pozabili geslo?
+      </Link>
 
       {state?.message && <FormMessage tone="error">{state.message}</FormMessage>}
 

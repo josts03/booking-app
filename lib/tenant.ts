@@ -41,3 +41,19 @@ export function subdomainOf(host: string): string | null {
 export function salonSlugFromHost(host: string | null): string {
   return subdomainOf(host ?? "") ?? DEFAULT_SALON_SLUG;
 }
+
+/**
+ * The salon's own address, for links that leave the app (e-mails):
+ * https://<slug>.<ROOT_DOMAIN>, or http://<slug>.localhost:3000 in development.
+ * Built from the slug, never from a request header, so a forged Host cannot
+ * put someone else's address into an e-mail.
+ */
+export function salonOrigin(slug: string): string {
+  if (!SLUG_PATTERN.test(slug)) throw new Error("salonOrigin: invalid slug");
+  const rootDomain = process.env.ROOT_DOMAIN?.toLowerCase();
+  if (rootDomain) return `https://${slug}.${rootDomain}`;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("ROOT_DOMAIN is not set: links in e-mails would point nowhere (see .env.example)");
+  }
+  return `http://${slug}.localhost:${process.env.PORT ?? "3000"}`;
+}
