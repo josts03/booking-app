@@ -33,7 +33,11 @@ export async function proxy(request: NextRequest) {
   let session: SessionRefresh | null = null;
   if (ADMIN_PATH.test(path)) {
     session = await refreshSession(request);
-    if (!session.signedIn) {
+    // Pages only. A server action (POST) is not redirected: Next could not show
+    // the sign-in page as its answer. The action itself answers "session
+    // expired" (lib/admin-access.ts), and lib/data.ts refuses the data anyway.
+    const isPageRequest = request.method === "GET" || request.method === "HEAD";
+    if (!session.signedIn && isPageRequest) {
       const url = request.nextUrl.clone();
       url.pathname = "/prijava";
       url.search = "";

@@ -3,16 +3,19 @@
 Multi-tenant platforma za naročanje strank v salonih. Več salonov, ena baza. Vsak
 salon ima svojo poddomeno (`salon.domena.si`), javno stran za naročanje in admin.
 
-**Stanje: teden 6.** Aplikacija bere in piše v pravo bazo (Supabase).
-Prijave še ni (teden 7), zato **admin deluje samo na tvojem računalniku**
-(`npm run dev`); povsod drugje, tudi z `npm run start`, je `/admin` zaprt (404).
-**Projekta še ne objavljaj na javni naslov.**
+**Stanje: teden 7.** Aplikacija bere in piše v pravo bazo (Supabase). `/admin`
+je zaščiten s prijavo (Supabase Auth): noter sme samo uporabnik, ki je v
+`salon_users` za salon s tega naslova. Po rezervaciji gre stranki potrditvena
+e-pošta (Resend) s povezavo za odpoved.
+**Projekta še ne objavljaj na javni naslov:** omejitev hitrosti in Turnstile
+pridejo v tednu 11.
 
 ## Sklad
 
 Next.js 16 (App Router), TypeScript, Tailwind CSS 4, date-fns in date-fns-tz.
-Baza: Supabase (Postgres, Auth, RLS) prek `@supabase/supabase-js`, preverjanje
-vnosov z `zod`. Kasneje: Vercel, Resend.
+Baza: Supabase (Postgres, Auth, RLS) prek `@supabase/supabase-js`, seja prijave v
+piškotku prek `@supabase/ssr`, preverjanje vnosov z `zod`. E-pošta: Resend (navaden
+`fetch`, brez knjižnice). Kasneje: Vercel.
 Samo za teste: PGlite (Postgres v pomnilniku, `devDependencies`).
 
 ## Zagon
@@ -37,6 +40,7 @@ Odpri http://localhost:3000. Brez izpolnjenega `.env.local` strani s podatki ne 
 | `npm test` | testi brez interneta: motor terminov, telefon, podatki in **baza** (migracije, RLS, pravila v Postgresu v pomnilniku) |
 | `npm run test:live` | testi proti **pravi** bazi iz `.env.local`: API res zavrača prepovedano, rezervacije delujejo, dve hkratni rezervaciji istega termina -> ena uspe. Kar ustvarijo, na koncu pobrišejo |
 | `npm run seed` | ustvari `supabase/seed.sql` s testnim salonom |
+| `npm run salon-user -- test ime@primer.si` | da obstoječemu uporabniku dostop do admina salona `test` (vloga `owner`; za zaposlenega dodaj `staff`) |
 
 Preverjanje tipov: `npx tsc --noEmit`. Zaženi ga po `npm run build`, ker gradnja
 ustvari globalne tipe (`PageProps`, `LayoutProps`).
@@ -48,7 +52,10 @@ ustvari globalne tipe (`PageProps`, `LayoutProps`).
 | `/` | prodajna stran platforme |
 | `/rezervacija` | javna stran za naročanje (4 koraki) |
 | `/rezervacija/potrditev/[token]` | potrditev termina |
-| `/admin` | admin: koledar, storitve, zaposleni, stranke, analitika |
+| `/odpoved/[token]` | odpoved termina (povezava iz e-pošte) |
+| `/prijava` | prijava v admin salona |
+| `/pozabljeno-geslo`, `/novo-geslo` | ponastavitev gesla (povezava iz e-pošte) |
+| `/admin` | admin: koledar, storitve, zaposleni, stranke, analitika (samo s prijavo) |
 
 Salon se izbere po poddomeni: `test.localhost:3000` je salon s slugom `test`.
 Brez poddomene (`localhost:3000`) se uporabi `test`. Na poddomeni salona je
@@ -63,7 +70,9 @@ cp .env.example .env.local
 `.env.local` ni v gitu. Za delovanje so potrebne tri vrednosti iz Supabase
 (Project Settings > API Keys): `NEXT_PUBLIC_SUPABASE_URL`,
 `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (`sb_publishable_…`) in `SUPABASE_SECRET_KEY`
-(`sb_secret_…`). Ostale spremenljivke so za naslednje tedne (glej `.env.example`).
+(`sb_secret_…`). Za e-pošto še `RESEND_API_KEY` in `EMAIL_FROM` (brez njiju se
+e-pošta ne pošilja, vse drugo deluje). Ostale spremenljivke so za naslednje tedne
+(glej `.env.example`).
 Skrivnosti nikoli ne gredo v spremenljivko s predpono `NEXT_PUBLIC_`; aplikacija se
 ne zažene, če je skrivni ključ pomotoma v javni spremenljivki.
 
@@ -90,6 +99,18 @@ Migracije so v `supabase/migrations/` in se poženejo po vrsti:
 
 `supabase/seed.sql` ni v gitu (vsakič se ustvari na novo, datumi so relativni).
 
+**Prijava** (Supabase > Authentication):
+
+1. Users > Add user > Create new user (e-naslov, geslo, Auto Confirm User), nato
+   `npm run salon-user -- <slug> <e-naslov>`. Registracija je izklopljena.
+2. URL Configuration: Site URL in Redirect URLs (`http://*.localhost:3000/**`,
+   v produkciji `https://*.domena.si/**`). Brez tega povezava za novo geslo ne dela.
+3. Emails > Reset password: zadeva in besedilo iz `supabase/templates/reset-password.html`.
+4. Providers > Email: najmanjša dolžina gesla 10.
+5. Pred pravimi saloni: Emails > SMTP Settings z Resend (`smtp.resend.com`, port 465,
+   uporabnik `resend`, geslo = ločen Resend ključ). Vgrajena pošta Supabase pošilja
+   samo članom ekipe projekta in le nekaj sporočil na uro.
+
 **Testi baze** (`tests/db.test.ts`) poženejo migracije in seed v pravem Postgresu
 v pomnilniku in preverijo varnostni seznam iz `specs/security.md`: anonimni
 obiskovalec ne bere strank in rezervacij, admin vidi samo svoj salon, termini se
@@ -105,19 +126,28 @@ app/
 lib/
   types.ts        tipi, 1:1 s tabelami v specs/schema.sql
   data.ts         EDINA pot do podatkov (Supabase)
-  supabase/       odjemalca: public.ts (javni ključ, RLS) in admin.ts (skrivni ključ, samo strežnik)
-  admin-access.ts kdo sme v admin (do prijave: samo npm run dev)
+  supabase/       odjemalci: public.ts (javni ključ, RLS), admin.ts (skrivni ključ, samo strežnik),
+                  session.ts in session-client.ts (seja prijavljenega uporabnika v piškotku)
+  auth.ts         prijava, odjava, novo geslo (Supabase Auth)
+  admin-access.ts kdo sme v admin: prijavljen in v salon_users za ta salon
+  safe-next.ts    kam po prijavi (samo znotraj /admin)
+  email.ts        predlogi (potrditev, opomnik) in pošiljanje prek Resend
+  notifications.ts potrditev po rezervaciji, zapis v booking_notifications
+  cancel.ts       pravilo odpovedi (več kot cancel_window_hours pred terminom)
+  tenant.ts       salon iz poddomene, naslov salona za povezave v e-pošti
   slots.ts        motor prostih terminov (čista funkcija, specs/slots.md)
   fixtures.ts     izmišljeni podatki testnega salona (seed in testi)
   phone.ts        telefonske številke v zapis E.164
   analytics.ts    čista funkcija za analitiko
   format.ts       slovenski zapisi (cene, datumi, trajanje)
   brand.ts        barva salona v CSS spremenljivke
-proxy.ts          poddomena -> glava x-salon-slug
+proxy.ts          poddomena -> glava x-salon-slug; /admin brez seje -> /prijava
 supabase/
   migrations/     001_tables, 002_constraints, 003_rls, 004_private_helpers
+  templates/      besedila e-pošte za Supabase Auth (ponastavitev gesla)
 scripts/
   seed.ts         npm run seed
+  add-salon-user.ts npm run salon-user
 tests/
   db.test.ts      testi baze (Postgres v pomnilniku)
   live/           testi proti pravi bazi (npm run test:live)
