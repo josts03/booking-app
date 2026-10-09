@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { buildFixtures } from "./fixtures";
 import {
+  cancellationEmail,
   cancelUrl,
   confirmationEmail,
   escapeHtml,
@@ -128,6 +129,27 @@ describe("reminderEmail", () => {
     const email = reminderEmail(emailData(), dayBefore);
     assert.ok(!email.text.includes("/odpoved/"));
     assert.match(email.text, /pokličite salon/);
+  });
+});
+
+describe("cancellationEmail", () => {
+  const cancelled = { ...booking, status: "cancelled" as const };
+
+  test("subject has the salon's name, Reply-To is the salon", () => {
+    const email = cancellationEmail(emailData({ booking: cancelled }), NOW);
+    assert.equal(email.subject, "Termin je odpovedan – Frizerstvo Test");
+    assert.equal(email.replyTo, salon.email);
+    assert.match(email.text, /Vaš termin je odpovedan/);
+  });
+
+  test("names the cancelled time, offers to book again, no cancel link", () => {
+    const email = cancellationEmail(emailData({ booking: cancelled }), NOW);
+    assert.match(email.text, /Termin: ponedeljek, 21\. 9\. 2026 ob 10:00–10:45/);
+    assert.ok(email.text.includes("Nova rezervacija: http://test.localhost:3000/rezervacija"));
+    assert.ok(email.html.includes('href="http://test.localhost:3000/rezervacija"'));
+    assert.ok(!email.text.includes("/odpoved/"));
+    assert.ok(!email.html.includes("/odpoved/"));
+    assert.ok(!email.text.includes("pokličite salon"));
   });
 });
 

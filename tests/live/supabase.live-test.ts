@@ -27,7 +27,7 @@ import {
 } from "../../lib/data";
 import { FIXTURE_SALON_ID, FIXTURE_TIMEZONE, buildFixtures } from "../../lib/fixtures";
 import type { OutgoingEmail, SendResult } from "../../lib/email";
-import { sendBookingConfirmation } from "../../lib/notifications";
+import { sendBookingConfirmation, sendCancellationNotice } from "../../lib/notifications";
 import { adminDb } from "../../lib/supabase/admin";
 import { publicDb } from "../../lib/supabase/public";
 import type { NewBooking } from "../../lib/types";
@@ -380,6 +380,51 @@ describe("createBooking against the live database", () => {
       ]);
       const stillThere = await adminDb().from("bookings").select("status").eq("id", failed.booking.id).single();
       assert.equal(stillThere.data?.status, "confirmed");
+    } finally {
+      Object.assign(env, saved);
+    }
+  });
+
+  test("cancellation e-mail: only for a cancelled booking, once", async () => {
+    const env = process.env as Record<string, string | undefined>;
+    const saved = { RESEND_API_KEY: env.RESEND_API_KEY, EMAIL_FROM: env.EMAIL_FROM };
+    // Fake sender below: nothing reaches Resend.
+    env.RESEND_API_KEY = "re_fake_for_tests";
+    env.EMAIL_FROM = "Termin <obvestila@example.com>";
+    try {
+      const sent: OutgoingEmail[] = [];
+      const deps = {
+        now: () => new Date(),
+        send: async (message: OutgoingEmail): Promise<SendResult> => {
+          sent.push(message);
+          return { ok: true, id: `fake-cancel-${sent.length}` };
+        },
+      };
+      const made = await remember(
+        await createBooking(newBooking({ staff_id: LUKA, starts_at: await freeStart(MENS_CUT.id, LUKA, 11), phone: phone(9) })),
+      );
+      assert.ok(made.ok, made.ok ? "" : made.error);
+
+      // Still confirmed: no cancellation e-mail.
+      await sendCancellationNotice(made.booking.id, deps);
+      assert.equal(sent.length, 0);
+
+      const start = Date.parse(made.booking.starts_at);
+      assert.ok((await cancelBookingByToken(SALON, made.booking.cancel_token, new Date(start - 48 * 3_600_000))).ok);
+      await Promise.all([sendCancellationNotice(made.booking.id, deps), sendCancellationNotice(made.booking.id, deps)]);
+      assert.equal(sent.length, 1, "exactly one cancellation e-mail");
+      assert.match(sent[0].subject, /^Termin je odpovedan – /);
+      assert.equal(sent[0].idempotencyKey, `cancellation:${made.booking.id}`);
+      assert.ok(!sent[0].text.includes("/odpoved/"));
+      const rows = await adminDb()
+        .from("booking_notifications")
+        .select("kind, status, provider_id")
+        .eq("booking_id", made.booking.id);
+      assert.deepEqual(rows.data, [{ kind: "cancellation", status: "sent", provider_id: "fake-cancel-1" }]);
+
+      // The confirmation is not sent for a cancelled booking either.
+      await sendBookingConfirmation(made.booking.id, deps);
+      assert.equal(sent.length, 1);
     } finally {
       Object.assign(env, saved);
     }

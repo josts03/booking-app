@@ -1,5 +1,5 @@
 /**
- * E-mail to customers: two templates (confirmation, reminder) and sending
+ * E-mail to customers: templates (confirmation, reminder, cancellation) and sending
  * through the Resend API with plain fetch (no library).
  *
  * - Subject contains the salon's name, the sender's display name is the salon,
@@ -71,6 +71,11 @@ interface Layout {
   subject: string;
   heading: string;
   lead: string;
+  /**
+   * "upcoming": how to cancel (a link until the deadline, then the salon's
+   * phone). "cancelled": a link to book again.
+   */
+  kind: "upcoming" | "cancelled";
 }
 
 function render(data: BookingEmailData, layout: Layout, now: Date): RenderedEmail {
@@ -88,16 +93,25 @@ function render(data: BookingEmailData, layout: Layout, now: Date): RenderedEmai
     ["Cena", formatPrice(booking.price_cents)],
   ];
 
-  const cancellable = canCancel(booking, salon.cancel_window_hours, now);
-  const link = cancellable ? cancelUrl(salon.slug, booking.cancel_token) : null;
-  // "do 20. 9. 2026, 10:00": no weekday, which would need the genitive ("do nedelje").
-  const deadline = formatDateTime(cancelDeadline(booking.starts_at, salon.cancel_window_hours).toISOString(), tz);
   const phone = salon.phone ? oneLine(salon.phone, 40) : null;
-  const cancelText = link
-    ? `Termin lahko odpoveste do ${deadline}.`
-    : phone
-      ? `Za odpoved ali spremembo pokličite salon na ${phone}.`
-      : "Za odpoved ali spremembo se obrnite na salon.";
+  let link: string | null;
+  let actionText: string;
+  let button: { label: string; textLabel: string };
+  if (layout.kind === "cancelled") {
+    link = `${salonOrigin(salon.slug)}/rezervacija`;
+    actionText = "Nov termin lahko kadar koli rezervirate na spletu.";
+    button = { label: "Nova rezervacija", textLabel: "Nova rezervacija" };
+  } else {
+    link = canCancel(booking, salon.cancel_window_hours, now) ? cancelUrl(salon.slug, booking.cancel_token) : null;
+    // "do 20. 9. 2026, 10:00": no weekday, which would need the genitive ("do nedelje").
+    const deadline = formatDateTime(cancelDeadline(booking.starts_at, salon.cancel_window_hours).toISOString(), tz);
+    actionText = link
+      ? `Termin lahko odpoveste do ${deadline}.`
+      : phone
+        ? `Za odpoved ali spremembo pokličite salon na ${phone}.`
+        : "Za odpoved ali spremembo se obrnite na salon.";
+    button = { label: "Odpovej termin", textLabel: "Odpoved" };
+  }
   const replyNote = salon.email ? " Na to sporočilo lahko odgovorite, odgovor prejme salon." : "";
   const footer = `To sporočilo ste prejeli, ker ste rezervirali termin pri salonu ${salonName}.${replyNote}`;
 
@@ -109,8 +123,8 @@ function render(data: BookingEmailData, layout: Layout, now: Date): RenderedEmai
     "",
     ...rows.map(([label, value]) => `${label}: ${value}`),
     "",
-    cancelText,
-    ...(link ? [`Odpoved: ${link}`] : []),
+    actionText,
+    ...(link ? [`${button.textLabel}: ${link}`] : []),
     "",
     salonName,
     ...(salon.address ? [oneLine(salon.address)] : []),
@@ -129,9 +143,9 @@ function render(data: BookingEmailData, layout: Layout, now: Date): RenderedEmai
         `<td style="${cell}font-weight:600;">${e(value)}</td></tr>`,
     )
     .join("");
-  const button = link
+  const buttonHtml = link
     ? `<p style="margin:16px 0 0;"><a href="${e(link)}" style="display:inline-block;padding:12px 20px;border-radius:10px;` +
-      `background:${color.brand};color:${color.onBrand};font-weight:600;text-decoration:none;">Odpovej termin</a></p>`
+      `background:${color.brand};color:${color.onBrand};font-weight:600;text-decoration:none;">${e(button.label)}</a></p>`
     : "";
   const phoneHtml = phone
     ? `<br><a href="${e(telHref(phone))}" style="color:${color.ink};">${e(phone)}</a>`
@@ -149,8 +163,8 @@ function render(data: BookingEmailData, layout: Layout, now: Date): RenderedEmai
 <p style="margin:0 0 8px;font-size:15px;">Pozdravljeni, ${e(firstName)}!</p>
 <p style="margin:0 0 16px;font-size:15px;">${e(layout.lead)}</p>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${detailRows}</table>
-<p style="margin:16px 0 0;font-size:15px;">${e(cancelText)}</p>
-${button}
+<p style="margin:16px 0 0;font-size:15px;">${e(actionText)}</p>
+${buttonHtml}
 <p style="margin:24px 0;font-size:14px;color:#57534e;"><strong style="color:#1c1917;">${e(salonName)}</strong>${salon.address ? `<br>${e(oneLine(salon.address))}` : ""}${phoneHtml}</p>
 </td></tr>
 </table>
@@ -173,11 +187,13 @@ export function confirmationEmail(data: BookingEmailData, now: Date): RenderedEm
           subject: `Prejeli smo vaš zahtevek za termin – ${salonName}`,
           heading: "Zahtevek za termin je oddan",
           lead: "Vaš zahtevek smo prejeli. Salon vam bo termin še potrdil.",
+          kind: "upcoming",
         }
       : {
           subject: `Potrditev termina – ${salonName}`,
           heading: "Termin je rezerviran",
           lead: "Vaš termin je potrjen. Veselimo se vašega obiska.",
+          kind: "upcoming",
         },
     now,
   );
@@ -193,6 +209,22 @@ export function reminderEmail(data: BookingEmailData, now: Date): RenderedEmail 
       subject: `Opomnik: ${start} – ${salonName}`,
       heading: "Opomnik na vaš termin",
       lead: `Spomnimo vas na vaš termin: ${start}.`,
+      kind: "upcoming",
+    },
+    now,
+  );
+}
+
+/** Right after the customer cancelled online: what was cancelled, and where to book again. */
+export function cancellationEmail(data: BookingEmailData, now: Date): RenderedEmail {
+  const salonName = oneLine(data.salon.name, 100);
+  return render(
+    data,
+    {
+      subject: `Termin je odpovedan – ${salonName}`,
+      heading: "Termin je odpovedan",
+      lead: "Vaš termin je odpovedan. Hvala, ker ste nam sporočili.",
+      kind: "cancelled",
     },
     now,
   );

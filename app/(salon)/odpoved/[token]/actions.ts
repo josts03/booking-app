@@ -1,9 +1,11 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { z } from "zod";
 import { getCurrentSalon, isBookable } from "@/lib/current-salon";
 import { cancelBookingByToken } from "@/lib/data";
+import { sendCancellationNotice } from "@/lib/notifications";
 
 export type CancelState = { message: string } | null;
 
@@ -33,6 +35,10 @@ export async function cancelBookingAction(_previous: CancelState, formData: Form
 
   const result = await cancelBookingByToken(salon.id, token.data);
   if (!result.ok) return { message: MESSAGES[result.reason] };
+
+  // "Your booking is cancelled" by e-mail, after the response (the customer does not wait).
+  const bookingId = result.booking.id;
+  after(() => sendCancellationNotice(bookingId));
 
   // redirect() throws, so it must stay outside any try/catch.
   redirect(`/odpoved/${token.data}?odpovedano=1`);
