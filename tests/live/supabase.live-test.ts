@@ -15,6 +15,7 @@ import { addDays, format, getDay, parseISO } from "date-fns";
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import {
   BOOKING_MESSAGES,
+  cancelBookingByToken,
   createBooking,
   getBookings,
   getCustomers,
@@ -285,6 +286,43 @@ describe("createBooking against the live database", () => {
     for (const r of [a, b]) if (r.data) createdBookingIds.push(r.data.id);
     assert.equal([a, b].filter((r) => !r.error).length, 1);
     assert.equal([a, b].find((r) => r.error)?.error?.code, "23P01");
+  });
+
+  test("cancel by link: full token only, own salon only, before the deadline, once", async () => {
+    const starts_at = await freeStart(MENS_CUT.id, MAJA, 20);
+    const made = await remember(await createBooking(newBooking({ starts_at, phone: phone(5) })));
+    assert.ok(made.ok, made.ok ? "" : made.error);
+    const { booking } = made;
+    const start = Date.parse(booking.starts_at);
+    const hoursBefore = (hours: number) => new Date(start - hours * 3_600_000);
+    const status = async () =>
+      (await adminDb().from("bookings").select("status").eq("id", booking.id).single()).data?.status;
+
+    // The seed salon's window is 24 h: exactly 24 h before is already too late.
+    assert.deepEqual(await cancelBookingByToken(SALON, booking.cancel_token, hoursBefore(24)), { ok: false, reason: "too-late" });
+    assert.deepEqual(await cancelBookingByToken(SALON, booking.cancel_token, hoursBefore(2)), { ok: false, reason: "too-late" });
+
+    // Not the id, not a token with one character changed, not another salon.
+    const last = booking.cancel_token.at(-1) === "0" ? "1" : "0";
+    for (const token of [booking.id, `${booking.cancel_token.slice(0, -1)}${last}`, "ni-uuid", ""]) {
+      assert.deepEqual(await cancelBookingByToken(SALON, token, hoursBefore(48)), { ok: false, reason: "not-found" }, token);
+    }
+    assert.deepEqual(
+      await cancelBookingByToken("00000000-0000-4000-8000-000000000000", booking.cancel_token, hoursBefore(48)),
+      { ok: false, reason: "not-found" },
+    );
+    assert.equal(await status(), "confirmed");
+
+    // One second before the deadline: cancelled, and the time is free again.
+    const done = await cancelBookingByToken(SALON, booking.cancel_token, new Date(start - 24 * 3_600_000 - 1000));
+    assert.ok(done.ok);
+    assert.equal(done.booking.status, "cancelled");
+    assert.equal(await status(), "cancelled");
+    const slots = await getFreeSlots({ salon_id: SALON, service_id: MENS_CUT.id, staff_id: MAJA, day: TEST_DAY });
+    assert.ok(slots.some((slot) => Date.parse(slot.starts_at) === start), "the cancelled time is bookable again");
+
+    // A second click changes nothing.
+    assert.deepEqual(await cancelBookingByToken(SALON, booking.cancel_token, hoursBefore(48)), { ok: false, reason: "not-active" });
   });
 
   test("an existing customer's data is never changed by the public form", async () => {

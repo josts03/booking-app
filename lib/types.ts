@@ -193,6 +193,11 @@ export type CreateBookingResult =
   /** `error` is a friendly Slovenian sentence, safe to show to the visitor. */
   | { ok: false; error: string };
 
+/** Cancelling by the link in the e-mail (lib/data.ts cancelBookingByToken). */
+export type CancelBookingResult =
+  | { ok: true; booking: Booking }
+  | { ok: false; reason: "not-found" | "not-active" | "too-late" | "failed" };
+
 // ---------- admin ----------
 
 /** A customer with the numbers the admin list shows. Cancelled bookings do not count. */

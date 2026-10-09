@@ -1,0 +1,39 @@
+"use server";
+
+import { redirect } from "next/navigation";
+import { z } from "zod";
+import { getCurrentSalon, isBookable } from "@/lib/current-salon";
+import { cancelBookingByToken } from "@/lib/data";
+
+export type CancelState = { message: string } | null;
+
+const MESSAGES = {
+  "not-found": "Rezervacije ni mogoče najti. Preverite povezavo iz e-pošte.",
+  "not-active": "Ta termin ni več aktiven.",
+  "too-late": "Roka za odpoved prek spleta je žal že potekel. Pokličite salon.",
+  failed: "Odpovedi trenutno ni mogoče shraniti. Poskusite znova čez nekaj minut.",
+} as const;
+
+/**
+ * Cancels the booking of the link. Runs on the server: the salon comes from
+ * the host, the token is compared in full, and the deadline is checked again
+ * in the database (lib/data.ts cancelBookingByToken), whatever the page showed.
+ */
+export async function cancelBookingAction(_previous: CancelState, formData: FormData): Promise<CancelState> {
+  const token = z.uuid().safeParse(formData.get("token"));
+  if (!token.success) return { message: MESSAGES["not-found"] };
+
+  let salon: Awaited<ReturnType<typeof getCurrentSalon>>;
+  try {
+    salon = await getCurrentSalon();
+  } catch {
+    return { message: MESSAGES.failed };
+  }
+  if (!salon || !isBookable(salon)) return { message: "Odpoved prek spleta trenutno ni mogoča. Pokličite salon." };
+
+  const result = await cancelBookingByToken(salon.id, token.data);
+  if (!result.ok) return { message: MESSAGES[result.reason] };
+
+  // redirect() throws, so it must stay outside any try/catch.
+  redirect(`/odpoved/${token.data}?odpovedano=1`);
+}

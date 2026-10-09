@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { canCancel } from "@/lib/cancel";
 import { getCurrentSalon, isBookable } from "@/lib/current-salon";
 import { getBookingByCancelToken, getServices, getStaff } from "@/lib/data";
 import {
@@ -108,6 +109,12 @@ export default async function ConfirmationPage({
           )}
         </p>
       </div>
+
+      {canCancel(booking, salon.cancel_window_hours, new Date()) && (
+        <Link href={`/odpoved/${booking.cancel_token}`} className={`${buttonSecondary} w-full`}>
+          Odpovej termin
+        </Link>
+      )}
 
       <Link href="/rezervacija" className={`${buttonSecondary} w-full`}>
         Nova rezervacija

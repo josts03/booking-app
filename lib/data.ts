@@ -40,6 +40,7 @@ import { adminDb } from "./supabase/admin";
 import { publicDb } from "./supabase/public";
 import type {
   Booking,
+  CancelBookingResult,
   CreateBookingResult,
   Customer,
   CustomerSummary,
@@ -783,6 +784,63 @@ export async function getFreeSlots(query: FreeSlotsQuery): Promise<FreeSlot[]> {
   const data = await loadSlotData(query.salon_id, query.service_id, query.day.slice(0, 7));
   if (!data) return [];
   return slotsForDay(data, query.staff_id, query.day, now);
+}
+
+// ---------- writes: cancel by link ----------
+
+/**
+ * Cancels a booking by its cancel_token, for the salon on this host, if it is
+ * pending or confirmed and starts MORE than salons.cancel_window_hours from
+ * `now` (lib/cancel.ts, same rule). One conditional UPDATE: two clicks at once,
+ * or a click just after the deadline, cannot both pass a check and then write.
+ * The window comes from the database, never from the request. A cancelled
+ * booking no longer blocks its time (the exclusion constraint ignores it).
+ */
+export async function cancelBookingByToken(
+  salonId: Uuid,
+  token: string,
+  now: Date = new Date(),
+): Promise<CancelBookingResult> {
+  if (!isUuid(salonId) || !isUuid(token)) return { ok: false, reason: "not-found" };
+  try {
+    const db = adminDb();
+    const salon = await must(
+      "cancelBookingByToken(salon)",
+      db.from("salons").select("cancel_window_hours").eq("id", salonId).maybeSingle<Pick<Salon, "cancel_window_hours">>(),
+    );
+    if (!salon) return { ok: false, reason: "not-found" };
+
+    const lastStart = new Date(now.getTime() + salon.cancel_window_hours * 3_600_000);
+    const cancelled = await must(
+      "cancelBookingByToken(update)",
+      db
+        .from("bookings")
+        .update({ status: "cancelled" })
+        .eq("salon_id", salonId)
+        .eq("cancel_token", token)
+        .in("status", ["pending", "confirmed"])
+        .gt("starts_at", lastStart.toISOString())
+        .select("*")
+        .maybeSingle<Booking>(),
+    );
+    if (cancelled) return { ok: true, booking: cancelled };
+
+    // Nothing changed: say why.
+    const booking = await must(
+      "cancelBookingByToken(read)",
+      db
+        .from("bookings")
+        .select("status")
+        .eq("salon_id", salonId)
+        .eq("cancel_token", token)
+        .maybeSingle<Pick<Booking, "status">>(),
+    );
+    if (!booking) return { ok: false, reason: "not-found" };
+    if (booking.status !== "pending" && booking.status !== "confirmed") return { ok: false, reason: "not-active" };
+    return { ok: false, reason: "too-late" };
+  } catch {
+    return { ok: false, reason: "failed" }; // already logged by fail()
+  }
 }
 
 // ---------- writes: bookings ----------
