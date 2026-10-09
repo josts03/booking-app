@@ -233,6 +233,11 @@ function displayName(name: string): string {
   return oneLine(name, 70).replace(/["\\<>,;:]/g, "").trim();
 }
 
+/** Both RESEND_API_KEY and a valid EMAIL_FROM are set. */
+export function emailConfigured(): boolean {
+  return Boolean(process.env.RESEND_API_KEY) && addressOf(process.env.EMAIL_FROM ?? "") !== null;
+}
+
 /**
  * Sends one e-mail. One retry for a network error, a timeout, 429 or 5xx (with
  * the same idempotency key, so the customer never gets it twice). Returns,

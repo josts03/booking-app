@@ -38,6 +38,7 @@ import { isE164, phoneSearchDigits } from "./phone";
 import { prostiTermini, type Interval } from "./slots";
 import { adminDb } from "./supabase/admin";
 import { publicDb } from "./supabase/public";
+import type { BookingEmailData } from "./email";
 import type {
   Booking,
   CancelBookingResult,
@@ -47,6 +48,7 @@ import type {
   FreeSlot,
   FreeSlotsQuery,
   NewBooking,
+  NotificationKind,
   Salon,
   SaveServiceResult,
   Service,
@@ -784,6 +786,107 @@ export async function getFreeSlots(query: FreeSlotsQuery): Promise<FreeSlot[]> {
   const data = await loadSlotData(query.salon_id, query.service_id, query.day.slice(0, 7));
   if (!data) return [];
   return slotsForDay(data, query.staff_id, query.day, now);
+}
+
+// ---------- notifications (e-mail to customers) ----------
+
+/** What an e-mail about a booking needs (lib/email.ts), plus where it goes. */
+export interface NotificationData extends BookingEmailData {
+  salonId: Uuid;
+  bookingId: Uuid;
+  /** The customer's e-mail, or null (e.g. a phone booking entered by the salon). */
+  to: string | null;
+}
+
+/**
+ * Loads one booking with its salon, service, staff member and customer, for
+ * an e-mail. Server only, never for a page: it reads the customer's e-mail.
+ * Callers are the booking action (after the booking was created) and the
+ * reminders cron (week 11). Separate queries: PostgREST cannot embed these
+ * tables unambiguously (they have two foreign keys each, 002_constraints.sql).
+ */
+export async function getNotificationData(bookingId: Uuid): Promise<NotificationData | null> {
+  if (!isUuid(bookingId)) return null;
+  const db = adminDb();
+  const booking = await must(
+    "getNotificationData(booking)",
+    db.from("bookings").select("*").eq("id", bookingId).maybeSingle<Booking>(),
+  );
+  if (!booking) return null;
+  const [salon, service, member, customer] = await Promise.all([
+    must(
+      "getNotificationData(salon)",
+      db
+        .from("salons")
+        .select("name, slug, email, phone, address, timezone, brand_color, cancel_window_hours")
+        .eq("id", booking.salon_id)
+        .single<BookingEmailData["salon"]>(),
+    ),
+    must(
+      "getNotificationData(service)",
+      db.from("services").select("name").eq("id", booking.service_id).eq("salon_id", booking.salon_id).single<{ name: string }>(),
+    ),
+    must(
+      "getNotificationData(staff)",
+      db.from("staff").select("name").eq("id", booking.staff_id).eq("salon_id", booking.salon_id).single<{ name: string }>(),
+    ),
+    must(
+      "getNotificationData(customer)",
+      db
+        .from("customers")
+        .select("first_name, email")
+        .eq("id", booking.customer_id)
+        .eq("salon_id", booking.salon_id)
+        .single<{ first_name: string; email: string | null }>(),
+    ),
+  ]);
+  return {
+    salonId: booking.salon_id,
+    bookingId: booking.id,
+    to: customer.email,
+    salon,
+    booking,
+    serviceName: service.name,
+    staffName: member.name,
+    customerFirstName: customer.first_name,
+  };
+}
+
+/**
+ * Reserves the right to send one message: inserts its booking_notifications row
+ * with status "pending". The unique (booking_id, kind, channel) lets exactly one
+ * caller win, so a message is never sent twice, even by two requests at once.
+ * Returns the row id, or null if this message was already claimed.
+ */
+export async function claimNotification(
+  salonId: Uuid,
+  bookingId: Uuid,
+  kind: NotificationKind,
+  channel = "email",
+): Promise<Uuid | null> {
+  const { data, error } = await adminDb()
+    .from("booking_notifications")
+    .insert({ salon_id: salonId, booking_id: bookingId, kind, channel, status: "pending" })
+    .select("id")
+    .single<{ id: Uuid }>();
+  if (!error) return data.id;
+  if (error.code === "23505") return null; // unique_violation: already claimed or sent
+  fail("claimNotification", error);
+}
+
+/** Records how sending went: "sent" with the provider's id, or "failed". */
+export async function finishNotification(
+  notificationId: Uuid,
+  status: "sent" | "failed",
+  providerId: string | null,
+): Promise<void> {
+  await must(
+    "finishNotification",
+    adminDb()
+      .from("booking_notifications")
+      .update({ status, provider_id: providerId, sent_at: new Date().toISOString() })
+      .eq("id", notificationId),
+  );
 }
 
 // ---------- writes: cancel by link ----------

@@ -149,6 +149,25 @@ export interface Booking {
   period: string;
 }
 
+/** booking_notifications.kind */
+export type NotificationKind = "confirmation" | "reminder" | "cancellation";
+
+/**
+ * table: booking_notifications. Unique per (booking_id, kind, channel), so a
+ * message is sent at most once. status is text: "pending" while sending, then
+ * "sent" or "failed" (lib/notifications.ts).
+ */
+export interface BookingNotification {
+  id: Uuid;
+  salon_id: Uuid;
+  booking_id: Uuid;
+  kind: NotificationKind;
+  channel: string;
+  status: string;
+  provider_id: string | null;
+  sent_at: Timestamptz;
+}
+
 // ============ app types (not tables) ============
 // Inputs and outputs of the functions in lib/data.ts. They keep the same shape
 // with Supabase (they did with the phase-1 mock too).

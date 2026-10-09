@@ -26,6 +26,8 @@ import {
   updateService,
 } from "../../lib/data";
 import { FIXTURE_SALON_ID, FIXTURE_TIMEZONE, buildFixtures } from "../../lib/fixtures";
+import type { OutgoingEmail, SendResult } from "../../lib/email";
+import { sendBookingConfirmation } from "../../lib/notifications";
 import { adminDb } from "../../lib/supabase/admin";
 import { publicDb } from "../../lib/supabase/public";
 import type { NewBooking } from "../../lib/types";
@@ -323,6 +325,83 @@ describe("createBooking against the live database", () => {
 
     // A second click changes nothing.
     assert.deepEqual(await cancelBookingByToken(SALON, booking.cancel_token, hoursBefore(48)), { ok: false, reason: "not-active" });
+  });
+
+  test("confirmation e-mail: sent once even if asked twice at once, recorded in booking_notifications", async () => {
+    const env = process.env as Record<string, string | undefined>;
+    const saved = { RESEND_API_KEY: env.RESEND_API_KEY, EMAIL_FROM: env.EMAIL_FROM };
+    // Fake sender below: nothing reaches Resend. The values only make e-mail look configured.
+    env.RESEND_API_KEY = "re_fake_for_tests";
+    env.EMAIL_FROM = "Termin <obvestila@example.com>";
+    try {
+      const sent: OutgoingEmail[] = [];
+      const fake = (result: (n: number) => SendResult) => ({
+        now: () => new Date(),
+        send: async (message: OutgoingEmail) => {
+          sent.push(message);
+          return result(sent.length);
+        },
+      });
+      const notifications = async (bookingId: string) =>
+        (
+          await adminDb()
+            .from("booking_notifications")
+            .select("salon_id, kind, channel, status, provider_id")
+            .eq("booking_id", bookingId)
+        ).data;
+
+      const ok = await remember(
+        await createBooking(newBooking({ staff_id: LUKA, starts_at: await freeStart(MENS_CUT.id, LUKA, 5), phone: phone(6) })),
+      );
+      assert.ok(ok.ok, ok.ok ? "" : ok.error);
+      const deps = fake((n) => ({ ok: true, id: `fake-${n}` }));
+      await Promise.all([sendBookingConfirmation(ok.booking.id, deps), sendBookingConfirmation(ok.booking.id, deps)]);
+      await sendBookingConfirmation(ok.booking.id, deps);
+      assert.equal(sent.length, 1, "exactly one e-mail");
+      const salon = await getSalon("test");
+      assert.equal(sent[0].to, "live-test@example.com");
+      assert.equal(sent[0].replyTo, salon!.email);
+      assert.equal(sent[0].fromName, salon!.name);
+      assert.ok(sent[0].subject.includes(salon!.name));
+      assert.equal(sent[0].idempotencyKey, `confirmation:${ok.booking.id}`);
+      assert.ok(sent[0].text.includes(`/odpoved/${ok.booking.cancel_token}`));
+      assert.deepEqual(await notifications(ok.booking.id), [
+        { salon_id: SALON, kind: "confirmation", channel: "email", status: "sent", provider_id: "fake-1" },
+      ]);
+
+      // A failed e-mail is recorded as failed; the booking stays.
+      const failed = await remember(
+        await createBooking(newBooking({ staff_id: LUKA, starts_at: await freeStart(MENS_CUT.id, LUKA, 7), phone: phone(7) })),
+      );
+      assert.ok(failed.ok, failed.ok ? "" : failed.error);
+      await sendBookingConfirmation(failed.booking.id, fake(() => ({ ok: false, reason: "failed" })));
+      assert.deepEqual(await notifications(failed.booking.id), [
+        { salon_id: SALON, kind: "confirmation", channel: "email", status: "failed", provider_id: null },
+      ]);
+      const stillThere = await adminDb().from("bookings").select("status").eq("id", failed.booking.id).single();
+      assert.equal(stillThere.data?.status, "confirmed");
+    } finally {
+      Object.assign(env, saved);
+    }
+  });
+
+  test("no e-mail configured: nothing is claimed or sent", async () => {
+    const env = process.env as Record<string, string | undefined>;
+    const saved = env.RESEND_API_KEY;
+    delete env.RESEND_API_KEY;
+    try {
+      const made = await remember(
+        await createBooking(newBooking({ staff_id: LUKA, starts_at: await freeStart(MENS_CUT.id, LUKA, 9), phone: phone(8) })),
+      );
+      assert.ok(made.ok, made.ok ? "" : made.error);
+      let calls = 0;
+      await sendBookingConfirmation(made.booking.id, { now: () => new Date(), send: async () => (calls++, { ok: true, id: "x" }) });
+      assert.equal(calls, 0);
+      const rows = await adminDb().from("booking_notifications").select("id").eq("booking_id", made.booking.id);
+      assert.deepEqual(rows.data, []);
+    } finally {
+      if (saved !== undefined) env.RESEND_API_KEY = saved;
+    }
   });
 
   test("an existing customer's data is never changed by the public form", async () => {

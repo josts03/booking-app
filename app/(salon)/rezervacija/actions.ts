@@ -1,10 +1,12 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { z } from "zod";
 import { getCurrentSalon, isBookable } from "@/lib/current-salon";
 import { BOOKING_MESSAGES, createBooking, getFreeSlots } from "@/lib/data";
 import { localDay } from "@/lib/format";
+import { sendBookingConfirmation } from "@/lib/notifications";
 import { normalizePhone } from "@/lib/phone";
 
 export type FieldName = "first_name" | "last_name" | "phone" | "email" | "note" | "terms";
@@ -152,6 +154,10 @@ export async function submitBooking(_previous: FormState, formData: FormData): P
       source: "online",
     });
     if (result.ok) {
+      // The confirmation e-mail goes out after the response: the visitor does
+      // not wait for Resend, and a failed e-mail never fails the booking.
+      const bookingId = result.booking.id;
+      after(() => sendBookingConfirmation(bookingId));
       // redirect() throws, so it must stay outside any try/catch.
       redirect(`/rezervacija/potrditev/${result.booking.cancel_token}`);
     }
