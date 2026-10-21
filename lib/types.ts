@@ -242,7 +242,8 @@ export interface BookingMove {
 
 /** Result of the admin's booking changes. `error` is a friendly Slovenian sentence. */
 export type AdminBookingResult =
-  | { ok: true; booking: Booking }
+  /** `previous`: the status before a status change (changeBookingStatus only). */
+  | { ok: true; booking: Booking; previous?: BookingStatus }
   /** `outsideHours`: allowed after the admin confirms (decision of 21. 10. 2026). */
   | { ok: false; error: string; outsideHours?: boolean };
 

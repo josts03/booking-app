@@ -5,6 +5,7 @@ import { sl } from "date-fns/locale";
 import { fromZonedTime } from "date-fns-tz";
 import { safeColor } from "@/lib/brand";
 import { getCurrentSalon } from "@/lib/current-salon";
+import { MOVABLE, needsConfirmation, statusActionLabel, statusChanges } from "@/lib/booking-status";
 import {
   getBooking,
   getBookings,
@@ -12,10 +13,12 @@ import {
   getServices,
   getStaff,
   getStaffHours,
+  getStaffServices,
   getTimeOff,
 } from "@/lib/data";
 import { formatTime, localDay, localMinutes } from "@/lib/format";
 import type { Staff } from "@/lib/types";
+import { BookingActions } from "../_components/booking-actions";
 import { BookingSheet } from "../_components/booking-sheet";
 import {
   CalendarGrid,
@@ -25,7 +28,7 @@ import {
 } from "../_components/calendar-grid";
 import { calendarHref, type CalendarView } from "../_components/calendar-url";
 import { statusLabel } from "../_components/status-badge";
-import { buttonSecondary, pageTitle } from "../_components/ui";
+import { buttonPrimary, buttonSecondary, pageTitle } from "../_components/ui";
 
 const DAY_FORMAT = "yyyy-MM-dd";
 const WEEKDAY_SHORT = ["Ned", "Pon", "Tor", "Sre", "Čet", "Pet", "Sob"];
@@ -38,6 +41,14 @@ function isDay(value: string | undefined): value is string {
 function toMinutes(time: string): number {
   const [hours, minutes] = time.split(":").map(Number);
   return hours * 60 + minutes;
+}
+
+/** The form for a booking entered by hand, with what the calendar already knows filled in. */
+function newBookingHref(prefill: { date: string; staff?: string; time?: string }): string {
+  const params = new URLSearchParams({ date: prefill.date });
+  if (prefill.staff) params.set("staff", prefill.staff);
+  if (prefill.time) params.set("time", prefill.time);
+  return `/admin/koledar/nov?${params.toString()}`;
 }
 
 function capitalize(text: string): string {
@@ -65,7 +76,7 @@ export default async function CalendarPage({ searchParams }: PageProps<"/admin/k
   const rangeStart = fromZonedTime(`${days[0]}T00:00:00`, tz);
   const rangeEnd = fromZonedTime(`${format(addDays(parseISO(days[days.length - 1]), 1), DAY_FORMAT)}T00:00:00`, tz);
 
-  const [staffList, services, bookings, timeOff, hours, openBooking] = await Promise.all([
+  const [staffList, services, bookings, timeOff, hours, openBooking, staffServices] = await Promise.all([
     getStaff(salon.id, { includeInactive: true }),
     getServices(salon.id, { includeInactive: true }),
     getBookings(salon.id, rangeStart, rangeEnd),
@@ -73,6 +84,8 @@ export default async function CalendarPage({ searchParams }: PageProps<"/admin/k
     getStaffHours(salon.id),
     // The booking whose details are open (it may lie outside the shown range).
     param("booking") ? getBooking(salon.id, param("booking")!) : Promise.resolve(null),
+    // Who may take the open booking when it is moved.
+    param("booking") ? getStaffServices(salon.id) : Promise.resolve([]),
   ]);
   // Only the customers of the bookings in view, not the whole customer list.
   const customers = await getCustomersByIds(salon.id, [
@@ -143,7 +156,16 @@ export default async function CalendarPage({ searchParams }: PageProps<"/admin/k
         };
       });
 
-    return { key: `${member.id}-${day}`, color: safeColor(member.color), open, off, bookings: laneBookings };
+    return {
+      key: `${member.id}-${day}`,
+      color: safeColor(member.color),
+      open,
+      off,
+      bookings: laneBookings,
+      // Day view: tapping an empty place starts a new booking there.
+      newBookingHref: view === "day" ? newBookingHref({ date: day, staff: member.id }) : undefined,
+      staffName: member.name,
+    };
   }
 
   const columns: CalendarColumn[] =
@@ -180,7 +202,12 @@ export default async function CalendarPage({ searchParams }: PageProps<"/admin/k
 
   return (
     <div className="space-y-4">
-      <h1 className={pageTitle}>Koledar</h1>
+      <div className="flex items-center justify-between gap-3">
+        <h1 className={pageTitle}>Koledar</h1>
+        <Link href={newBookingHref({ date, staff: filterStaff?.id })} className={buttonPrimary}>
+          + Nov termin
+        </Link>
+      </div>
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2">
@@ -257,6 +284,31 @@ export default async function CalendarPage({ searchParams }: PageProps<"/admin/k
           customer={customerById.get(openBooking.customer_id)}
           timezone={tz}
           closeHref={calendarHref(state)}
+          actions={
+            <BookingActions
+              // A move gives a fresh form; a status change keeps its "done" message.
+              key={`${openBooking.id}-${openBooking.starts_at}-${openBooking.staff_id}`}
+              bookingId={openBooking.id}
+              actions={statusChanges(openBooking, new Date()).map((to) => ({
+                to,
+                label: statusActionLabel(openBooking.status, to),
+                confirm: needsConfirmation(to),
+              }))}
+              movable={MOVABLE.includes(openBooking.status)}
+              hasEmail={Boolean(openBooking.contact_email ?? customerById.get(openBooking.customer_id)?.email)}
+              view={view}
+              move={{
+                date: localDay(openBooking.starts_at, tz),
+                time: formatTime(openBooking.starts_at, tz),
+                staffId: openBooking.staff_id,
+              }}
+              staffOptions={activeStaff
+                .filter((member) =>
+                  staffServices.some((link) => link.staff_id === member.id && link.service_id === openBooking.service_id),
+                )
+                .map((member) => ({ id: member.id, name: member.name }))}
+            />
+          }
         />
       )}
     </div>

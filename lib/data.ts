@@ -1335,7 +1335,7 @@ export async function changeBookingStatus(
     if (!data) return { ok: false, error: ADMIN_MESSAGES.changed };
 
     await audit(salonId, actor, "booking.status", bookingId, { from: current.status, to });
-    return { ok: true, booking: data };
+    return { ok: true, booking: data, previous: current.status };
   } catch {
     return { ok: false, error: ADMIN_MESSAGES.failed };
   }

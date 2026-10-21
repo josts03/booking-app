@@ -37,6 +37,27 @@ export interface CalendarLane {
   open: [number, number][];
   off: { startMin: number; endMin: number; label: string }[];
   bookings: CalendarBooking[];
+  /** If set, every free half hour in the working windows links here with "&time=HH:MM" (a new booking). */
+  newBookingHref?: string;
+  staffName?: string;
+}
+
+const HALF_HOUR = 30;
+
+/** "570" -> "09:30" */
+function hhmm(minutes: number): string {
+  return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+}
+
+/** Half-hour starts inside the open windows (and the visible axis), for "tap to add". */
+function halfHours(open: [number, number][], axisStart: number, axisEnd: number): number[] {
+  const starts: number[] = [];
+  for (const [from, to] of open) {
+    for (let minute = Math.ceil(from / HALF_HOUR) * HALF_HOUR; minute + HALF_HOUR <= to; minute += HALF_HOUR) {
+      if (minute >= axisStart && minute + HALF_HOUR <= axisEnd) starts.push(minute);
+    }
+  }
+  return starts;
 }
 
 export interface CalendarColumn {
@@ -189,6 +210,22 @@ export function CalendarGrid({ columns, axisStart, axisEnd, nowMin, minColumnWid
                     </div>
                   );
                 })}
+
+                {lane.newBookingHref &&
+                  halfHours(lane.open, axisStart, axisEnd).map((minute) => (
+                    // Mouse and touch only: the "+ Nov termin" button is the keyboard and screen-reader way.
+                    <Link
+                      key={`new-${minute}`}
+                      href={`${lane.newBookingHref}&time=${hhmm(minute)}`}
+                      tabIndex={-1}
+                      aria-hidden="true"
+                      title={`Nov termin ob ${hhmm(minute)}${lane.staffName ? ` (${lane.staffName})` : ""}`}
+                      className="group absolute inset-x-0 flex items-start justify-end px-1 pt-0.5 text-xs font-semibold text-brand-ink hover:bg-brand-soft"
+                      style={{ top: y(minute, axisStart), height: `calc(var(--hour-h) * ${HALF_HOUR / 60})` }}
+                    >
+                      <span className="opacity-0 group-hover:opacity-100">+ {hhmm(minute)}</span>
+                    </Link>
+                  ))}
 
                 {lane.bookings.map((booking) => (
                   <Link

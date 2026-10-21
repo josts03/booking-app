@@ -15,6 +15,7 @@ export function BookingSheet({
   customer,
   timezone,
   closeHref,
+  actions,
 }: {
   booking: Booking;
   service: Service | undefined;
@@ -22,6 +23,8 @@ export function BookingSheet({
   customer: Customer | undefined;
   timezone: string;
   closeHref: string;
+  /** Status buttons and moving (booking-actions.tsx), rendered above the bottom buttons. */
+  actions?: React.ReactNode;
 }) {
   const customerName = customer
     ? `${customer.first_name} ${customer.last_name ?? ""}`.trim()
@@ -65,10 +68,20 @@ export function BookingSheet({
       </a>,
     ]);
   }
+  // 005: the address given with this booking, where messages about it go.
+  if (booking.contact_email && booking.contact_email !== customer?.email) {
+    rows.push([
+      "E-pošta za ta termin",
+      <a key="contact" href={`mailto:${booking.contact_email}`} className="break-all font-medium text-brand-ink underline">
+        {booking.contact_email}
+      </a>,
+    ]);
+  }
   rows.push(["Cena", formatPrice(booking.price_cents)]);
   if (booking.customer_note) rows.push(["Opomba stranke", booking.customer_note]);
   if (booking.internal_note) rows.push(["Interna opomba", booking.internal_note]);
-  rows.push(["Vir", `${booking.source}, ustvarjeno ${formatDateTime(booking.created_at, timezone)}`]);
+  const source = booking.source === "online" ? "spletna rezervacija" : booking.source === "admin" ? "vnos v salonu" : booking.source;
+  rows.push(["Vir", `${source}, ustvarjeno ${formatDateTime(booking.created_at, timezone)}`]);
 
   return (
     <SheetShell closeHref={closeHref} titleId="booking-title">
@@ -95,6 +108,8 @@ export function BookingSheet({
           </div>
         ))}
       </dl>
+
+      {actions}
 
       <div className="mt-5 grid grid-cols-2 gap-3">
         <Link href={closeHref} className={buttonSecondary}>
