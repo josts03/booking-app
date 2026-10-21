@@ -450,6 +450,21 @@ describe("rules the database enforces for everyone (even the server)", () => {
     });
   });
 
+  test("006: notification kinds; each message once per booking, except reschedules", async () => {
+    await as("postgres", null, async () => {
+      const id = fixtures.bookings[0].id;
+      const add = (kind: string) =>
+        outcome(`insert into booking_notifications (salon_id, booking_id, kind) values ('${TEST}', '${id}', '${kind}')`);
+      for (const kind of ["request", "confirmation", "reminder", "cancellation"]) {
+        assert.equal(await add(kind), "ok", kind);
+        assert.equal(await add(kind), UNIQUE, `${kind} twice`);
+      }
+      assert.equal(await add("reschedule"), "ok");
+      assert.equal(await add("reschedule"), "ok"); // a booking can be moved more than once
+      assert.equal(await add("sms-spam"), CHECK);
+    });
+  });
+
   test("salon values stay usable: interval, color, slug, amounts", async () => {
     await as("postgres", null, async () => {
       assert.equal(await outcome(`update salons set slot_interval_min = 0 where id = '${TEST}'`), CHECK);
