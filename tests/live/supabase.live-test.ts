@@ -53,6 +53,7 @@ function dayAhead(days: number, weekday: number): string {
   return format(date, "yyyy-MM-dd");
 }
 const TEST_DAY = dayAhead(21, 2); // a Tuesday about three weeks ahead: no seed bookings there
+const BUFFER_DAY = dayAhead(22, 3); // a Wednesday, so the buffer test takes no slots from TEST_DAY
 
 const createdBookingIds: string[] = [];
 const tempSalonIds: string[] = [];
@@ -215,13 +216,20 @@ describe("lib/data.ts against the live database", () => {
     assert.equal((await getServices(SALON)).find((s) => s.id === MENS_CUT.id)?.price_cents, MENS_CUT.price_cents);
   });
 
-  test("getFreeSlots: a seeded booking blocks its time including the buffer", async () => {
-    // Seed booking 1: next Monday 10:00, Maja, women's cut (45 + 5 min).
-    const monday = f.bookings[0];
-    const day = formatInTimeZone(monday.starts_at, TZ, "yyyy-MM-dd");
-    const slots = await getFreeSlots({ salon_id: SALON, service_id: MENS_CUT.id, staff_id: MAJA, day });
-    const busyFrom = Date.parse(monday.starts_at);
-    const busyTo = Date.parse(monday.ends_at) + monday.buffer_min * 60_000;
+  test("getFreeSlots: a booking blocks its time including the buffer", async () => {
+    // Its own booking (women's cut, 45 + 5 min): the seed's bookings lie in the
+    // past once the seed is a week old, so this must not depend on them.
+    const free = await getFreeSlots({ salon_id: SALON, service_id: WOMENS_CUT.id, staff_id: MAJA, day: BUFFER_DAY });
+    assert.ok(free.length > 2, "no free slot on the test day");
+    const made = await remember(
+      await createBooking(newBooking({ service_id: WOMENS_CUT.id, starts_at: free[2].starts_at, phone: phone(3) })),
+    );
+    assert.ok(made.ok, made.ok ? "" : made.error);
+    const booking = made.booking;
+    const slots = await getFreeSlots({ salon_id: SALON, service_id: MENS_CUT.id, staff_id: MAJA, day: BUFFER_DAY });
+    const busyFrom = Date.parse(booking.starts_at);
+    const busyTo = Date.parse(booking.ends_at) + booking.buffer_min * 60_000;
+    assert.equal(booking.buffer_min, 5);
     for (const slot of slots) {
       const overlaps = Date.parse(slot.starts_at) < busyTo && Date.parse(slot.ends_at) > busyFrom;
       assert.ok(!overlaps, formatInTimeZone(slot.starts_at, TZ, "HH:mm"));
