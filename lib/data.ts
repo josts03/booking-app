@@ -32,21 +32,27 @@ import { cache } from "react";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { addDays, addMinutes, format, getDay, parseISO } from "date-fns";
 import { fromZonedTime } from "date-fns-tz";
-import { getSignedInUser } from "./auth";
-import { localDay } from "./format";
+import { getSignedInUser, type SignedInUser } from "./auth";
+import { canChangeStatus, MOVABLE } from "./booking-status";
+import { formatTime, localDay } from "./format";
 import { isE164, phoneSearchDigits } from "./phone";
 import { prostiTermini, type Interval } from "./slots";
 import { adminDb } from "./supabase/admin";
+import { workingHoursProblem } from "./working-hours";
 import { publicDb } from "./supabase/public";
 import type { BookingEmailData } from "./email";
 import type {
+  AdminBookingResult,
   Booking,
+  BookingMove,
+  BookingStatus,
   CancelBookingResult,
   CreateBookingResult,
   Customer,
   CustomerSummary,
   FreeSlot,
   FreeSlotsQuery,
+  ManualBookingInput,
   NewBooking,
   NotificationKind,
   Salon,
@@ -109,9 +115,9 @@ export const getSalonRole = cache(async (salonId: Uuid, userId: Uuid): Promise<S
  * unless the signed-in user is a member of `salonId`, so even a caller that
  * passes another salon's id gets nothing.
  */
-async function adminOnly(salonId: Uuid, context: string): Promise<void> {
+async function adminOnly(salonId: Uuid, context: string): Promise<SignedInUser> {
   const user = await getSignedInUser();
-  if (user && (await getSalonRole(salonId, user.id))) return;
+  if (user && (await getSalonRole(salonId, user.id))) return user;
   console.error(`[data] ${context} refused: no admin access`);
   throw new Error(`No admin access: ${context}`);
 }
@@ -983,7 +989,7 @@ function sensibleInput(input: NewBooking): boolean {
  */
 async function findOrCreateCustomer(
   salonId: string,
-  input: NewBooking,
+  input: Pick<NewBooking, "first_name" | "last_name" | "phone" | "marketing_consent"> & { email: string | null },
 ): Promise<{ id: string; created: boolean }> {
   const db = adminDb();
   const find = () =>
@@ -1007,7 +1013,7 @@ async function findOrCreateCustomer(
       first_name: input.first_name.trim(),
       last_name: input.last_name?.trim() || null,
       phone: input.phone,
-      email: input.email.trim(),
+      email: input.email?.trim() || null,
       marketing_consent: input.marketing_consent,
     })
     .select("id")
@@ -1150,5 +1156,386 @@ export async function createBooking(input: NewBooking): Promise<CreateBookingRes
   } catch {
     // Already logged by fail(); the visitor gets a friendly sentence and keeps the form.
     return { ok: false, error: MESSAGES.failed };
+  }
+}
+
+// ---------- admin: status, bookings entered by hand, moves ----------
+
+/** Friendly sentences for the admin's booking changes. */
+export const ADMIN_BOOKING_MESSAGES = {
+  notFound: "Termina ni mogoče najti. Osvežite stran.",
+  changed: "Termin je bil medtem spremenjen. Osvežite stran.",
+  notAllowed: "Tega pri tem terminu ni mogoče narediti.",
+  invalid: "Storitve, zaposlenega ali stranke ni mogoče uporabiti. Preverite izbiro.",
+  staffService: "Izbrani zaposleni te storitve ne izvaja.",
+  sameTime: "Termin je že ob tej uri pri tem zaposlenem.",
+  failed: "Sprememb trenutno ni mogoče shraniti. Poskusite znova čez nekaj minut.",
+} as const;
+const ADMIN_MESSAGES = ADMIN_BOOKING_MESSAGES;
+
+/** Manual bookings may be in the past (entered afterwards), but not absurdly far away. */
+const MANUAL_RANGE_DAYS = 2 * 365;
+
+/**
+ * Records who did what in audit_log (service_role only, 003_rls.sql). A failed
+ * write is logged and does not undo the change: the change itself is what the
+ * salon needs.
+ */
+async function audit(
+  salonId: Uuid,
+  actor: SignedInUser,
+  action: string,
+  entityId: Uuid,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const { error } = await adminDb()
+    .from("audit_log")
+    .insert({ salon_id: salonId, actor_user_id: actor.id, action, entity: "booking", entity_id: entityId, payload });
+  if (error) console.error(`[data] audit(${action}) failed: ${error.code} ${error.message}`);
+}
+
+/**
+ * "Maja ima ob tem času že termin (10:00–10:45)." for an overlap the database
+ * refused (23P01). Names the booking in the way, so the salon knows where to look.
+ */
+async function overlapMessage(
+  salonId: Uuid,
+  staff: Pick<Staff, "id" | "name">,
+  start: Date,
+  busyEnd: Date,
+  timeZone: string,
+  excludeBookingId?: Uuid,
+): Promise<string> {
+  let query = adminDb()
+    .from("bookings")
+    .select("starts_at, ends_at")
+    .eq("salon_id", salonId)
+    .eq("staff_id", staff.id)
+    .in("status", ["pending", "confirmed"])
+    .filter("period", "ov", `[${start.toISOString()},${busyEnd.toISOString()})`)
+    .order("starts_at")
+    .limit(1);
+  if (excludeBookingId) query = query.neq("id", excludeBookingId);
+  const { data } = await query.returns<Pick<Booking, "starts_at" | "ends_at">[]>();
+  const other = data?.[0];
+  return other
+    ? `${staff.name} ima ob tem času že termin (${formatTime(other.starts_at, timeZone)}–${formatTime(other.ends_at, timeZone)}). Izberite drugo uro ali drugega zaposlenega.`
+    : `${staff.name} ima ob tem času že drug termin. Izberite drugo uro ali drugega zaposlenega.`;
+}
+
+/** Whether [start, busyEnd) fits the staff member's hours and absences (lib/working-hours.ts); null if it does. */
+async function hoursWarning(
+  salonId: Uuid,
+  staff: Pick<Staff, "id" | "name">,
+  start: Date,
+  busyEnd: Date,
+  timeZone: string,
+): Promise<string | null> {
+  const db = adminDb();
+  const [hours, timeOff] = await Promise.all([
+    must(
+      "hoursWarning(hours)",
+      db
+        .from("staff_hours")
+        .select("staff_id, weekday, start_time, end_time")
+        .eq("salon_id", salonId)
+        .eq("staff_id", staff.id)
+        .returns<Pick<StaffHours, "staff_id" | "weekday" | "start_time" | "end_time">[]>(),
+    ),
+    must(
+      "hoursWarning(time_off)",
+      db
+        .from("time_off")
+        .select("staff_id, starts_at, ends_at")
+        .eq("salon_id", salonId)
+        .lt("starts_at", busyEnd.toISOString())
+        .gt("ends_at", start.toISOString())
+        .returns<Pick<TimeOff, "staff_id" | "starts_at" | "ends_at">[]>(),
+    ),
+  ]);
+  const problem = workingHoursProblem({ staffId: staff.id, start, busyEnd, hours, timeOff, timeZone });
+  if (problem === "absent") return `${staff.name}: ob tem času je vpisana odsotnost.`;
+  if (problem === "not-working") return `${staff.name}: ob tem času ni delovni čas.`;
+  return null;
+}
+
+/** An active staff member of this salon who performs the service, or null. */
+async function performer(salonId: Uuid, staffId: Uuid, serviceId: Uuid): Promise<Pick<Staff, "id" | "name"> | "no-service" | null> {
+  const db = adminDb();
+  const [member, link] = await Promise.all([
+    must(
+      "performer(staff)",
+      db
+        .from("staff")
+        .select("id, name")
+        .eq("id", staffId)
+        .eq("salon_id", salonId)
+        .eq("is_active", true)
+        .maybeSingle<Pick<Staff, "id" | "name">>(),
+    ),
+    must(
+      "performer(staff_services)",
+      db
+        .from("staff_services")
+        .select("staff_id")
+        .eq("salon_id", salonId)
+        .eq("staff_id", staffId)
+        .eq("service_id", serviceId)
+        .maybeSingle<{ staff_id: string }>(),
+    ),
+  ]);
+  if (!member) return null;
+  return link ? member : "no-service";
+}
+
+/**
+ * Moves a booking to another status from the admin (lib/booking-status.ts
+ * decides which). One conditional UPDATE: it only applies if the booking still
+ * has the status the admin saw, so two phones cannot both change it. Going
+ * back to "confirmed" can collide with another booking: the database refuses
+ * (23P01) and the salon is told which one.
+ */
+export async function changeBookingStatus(
+  salonId: Uuid,
+  bookingId: Uuid,
+  to: BookingStatus,
+  now: Date = new Date(),
+): Promise<AdminBookingResult> {
+  const actor = await adminOnly(salonId, "changeBookingStatus");
+  if (!isUuid(bookingId)) return { ok: false, error: ADMIN_MESSAGES.notFound };
+  try {
+    const db = adminDb();
+    const current = await must(
+      "changeBookingStatus(read)",
+      db.from("bookings").select("*").eq("id", bookingId).eq("salon_id", salonId).maybeSingle<Booking>(),
+    );
+    if (!current) return { ok: false, error: ADMIN_MESSAGES.notFound };
+    if (!canChangeStatus(current, to, now)) return { ok: false, error: ADMIN_MESSAGES.notAllowed };
+
+    let update = db
+      .from("bookings")
+      .update({ status: to })
+      .eq("id", bookingId)
+      .eq("salon_id", salonId)
+      .eq("status", current.status);
+    // "Completed" and "no-show" need the start to have passed, checked in the same statement.
+    if (to === "completed" || to === "no_show") update = update.lte("starts_at", now.toISOString());
+    const { data, error } = await update.select("*").maybeSingle<Booking>();
+
+    if (error?.code === "23P01") {
+      const [member, salon] = await Promise.all([
+        must("changeBookingStatus(staff)", db.from("staff").select("id, name").eq("id", current.staff_id).single<Pick<Staff, "id" | "name">>()),
+        must("changeBookingStatus(salon)", db.from("salons").select("timezone").eq("id", salonId).single<Pick<Salon, "timezone">>()),
+      ]);
+      const start = new Date(current.starts_at);
+      const busyEnd = addMinutes(new Date(current.ends_at), current.buffer_min);
+      return { ok: false, error: await overlapMessage(salonId, member, start, busyEnd, salon.timezone, bookingId) };
+    }
+    if (error) fail("changeBookingStatus(update)", error);
+    if (!data) return { ok: false, error: ADMIN_MESSAGES.changed };
+
+    await audit(salonId, actor, "booking.status", bookingId, { from: current.status, to });
+    return { ok: true, booking: data };
+  } catch {
+    return { ok: false, error: ADMIN_MESSAGES.failed };
+  }
+}
+
+/**
+ * A booking the salon enters by hand (a phone call, a walk-in, afterwards).
+ * Unlike the public form it may be in the past and ignores the minimum notice
+ * and the booking window. It never skips the overlap rule: the database
+ * refuses two bookings of one staff member at once (23P01), and the salon is
+ * told which booking is in the way. Outside working hours or during an
+ * absence it asks first (`outsideHours`), unless `allowOutsideHours`.
+ * Price, end and buffer always come from the database.
+ */
+export async function createManualBooking(
+  salonId: Uuid,
+  input: ManualBookingInput,
+  options: { allowOutsideHours: boolean },
+  now: Date = new Date(),
+): Promise<AdminBookingResult> {
+  const actor = await adminOnly(salonId, "createManualBooking");
+  const start = new Date(input.starts_at);
+  const newCustomer = "id" in input.customer ? null : input.customer;
+  if (
+    !isUuid(input.service_id) ||
+    !isUuid(input.staff_id) ||
+    Number.isNaN(start.getTime()) ||
+    Math.abs(start.getTime() - now.getTime()) > MANUAL_RANGE_DAYS * 86_400_000 ||
+    ("id" in input.customer && !isUuid(input.customer.id)) ||
+    (newCustomer !== null &&
+      (newCustomer.first_name.trim().length === 0 ||
+        newCustomer.first_name.length > 60 ||
+        (newCustomer.last_name ?? "").length > 60 ||
+        (newCustomer.email ?? "").length > 254 ||
+        !isE164(newCustomer.phone))) ||
+    (input.customer_note ?? "").length > 500 ||
+    (input.internal_note ?? "").length > 1000
+  ) {
+    return { ok: false, error: ADMIN_MESSAGES.invalid };
+  }
+
+  try {
+    const db = adminDb();
+    const [salon, service, member] = await Promise.all([
+      must("createManualBooking(salon)", db.from("salons").select("id, timezone").eq("id", salonId).maybeSingle<Pick<Salon, "id" | "timezone">>()),
+      must(
+        "createManualBooking(service)",
+        db
+          .from("services")
+          .select("id, duration_min, buffer_after_min, price_cents")
+          .eq("id", input.service_id)
+          .eq("salon_id", salonId)
+          .eq("is_active", true)
+          .maybeSingle<Pick<Service, "id" | "duration_min" | "buffer_after_min" | "price_cents">>(),
+      ),
+      performer(salonId, input.staff_id, input.service_id),
+    ]);
+    if (!salon || !service || !member) return { ok: false, error: ADMIN_MESSAGES.invalid };
+    if (member === "no-service") return { ok: false, error: ADMIN_MESSAGES.staffService };
+
+    const end = addMinutes(start, service.duration_min);
+    const busyEnd = addMinutes(end, service.buffer_after_min);
+    if (!options.allowOutsideHours) {
+      const warning = await hoursWarning(salonId, member, start, busyEnd, salon.timezone);
+      if (warning) return { ok: false, error: warning, outsideHours: true };
+    }
+
+    // The customer: an existing one of THIS salon, or found / created by phone.
+    let customer: { id: string; created: boolean };
+    if ("id" in input.customer) {
+      const existing = await must(
+        "createManualBooking(customer)",
+        db.from("customers").select("id").eq("id", input.customer.id).eq("salon_id", salonId).maybeSingle<{ id: string }>(),
+      );
+      if (!existing) return { ok: false, error: ADMIN_MESSAGES.invalid };
+      customer = { id: existing.id, created: false };
+    } else {
+      customer = await findOrCreateCustomer(salonId, { ...input.customer, marketing_consent: false });
+    }
+
+    const { data, error } = await db
+      .from("bookings")
+      .insert({
+        salon_id: salonId,
+        staff_id: member.id,
+        service_id: service.id,
+        customer_id: customer.id,
+        starts_at: start.toISOString(),
+        ends_at: end.toISOString(),
+        buffer_min: service.buffer_after_min,
+        status: "confirmed",
+        price_cents: service.price_cents,
+        customer_note: input.customer_note?.trim() || null,
+        internal_note: input.internal_note?.trim() || null,
+        source: "admin",
+        contact_email: newCustomer?.email?.trim() || null,
+      })
+      .select("*")
+      .single<Booking>();
+
+    if (!error && data) {
+      await audit(salonId, actor, "booking.create", data.id, { source: "admin", starts_at: data.starts_at, staff_id: data.staff_id });
+      return { ok: true, booking: data };
+    }
+
+    // Not saved: do not leave behind a customer created just for it.
+    if (customer.created) {
+      const cleanup = await db.from("customers").delete().eq("id", customer.id).eq("salon_id", salonId);
+      if (cleanup.error) console.error(`[data] createManualBooking(cleanup) failed: ${cleanup.error.code}`);
+    }
+    if (error?.code === "23P01") {
+      return { ok: false, error: await overlapMessage(salonId, member, start, busyEnd, salon.timezone) };
+    }
+    console.error(`[data] createManualBooking(insert) failed: ${error?.code} ${error?.message}`);
+    if (error?.code === "23503" || error?.code === "23514") return { ok: false, error: ADMIN_MESSAGES.invalid };
+    return { ok: false, error: ADMIN_MESSAGES.failed };
+  } catch {
+    return { ok: false, error: ADMIN_MESSAGES.failed };
+  }
+}
+
+/**
+ * Moves a pending or confirmed booking to another start and/or staff member.
+ * Duration, cleaning buffer and price stay. Same rules as a manual booking:
+ * no minimum notice, overlap always refused by the database, outside working
+ * hours only after the admin confirms. The UPDATE only applies if the booking
+ * is still where the admin saw it. A reminder already sent is forgotten, so
+ * the new time gets its own (week 11).
+ */
+export async function rescheduleBooking(
+  salonId: Uuid,
+  bookingId: Uuid,
+  move: BookingMove,
+  options: { allowOutsideHours: boolean },
+  now: Date = new Date(),
+): Promise<AdminBookingResult> {
+  const actor = await adminOnly(salonId, "rescheduleBooking");
+  const start = new Date(move.starts_at);
+  if (
+    !isUuid(bookingId) ||
+    !isUuid(move.staff_id) ||
+    Number.isNaN(start.getTime()) ||
+    Math.abs(start.getTime() - now.getTime()) > MANUAL_RANGE_DAYS * 86_400_000
+  ) {
+    return { ok: false, error: ADMIN_MESSAGES.invalid };
+  }
+
+  try {
+    const db = adminDb();
+    const [current, salon] = await Promise.all([
+      must("rescheduleBooking(read)", db.from("bookings").select("*").eq("id", bookingId).eq("salon_id", salonId).maybeSingle<Booking>()),
+      must("rescheduleBooking(salon)", db.from("salons").select("timezone").eq("id", salonId).maybeSingle<Pick<Salon, "timezone">>()),
+    ]);
+    if (!current || !salon) return { ok: false, error: ADMIN_MESSAGES.notFound };
+    if (!MOVABLE.includes(current.status)) return { ok: false, error: ADMIN_MESSAGES.notAllowed };
+    if (current.staff_id === move.staff_id && Date.parse(current.starts_at) === start.getTime()) {
+      return { ok: false, error: ADMIN_MESSAGES.sameTime };
+    }
+
+    const member = await performer(salonId, move.staff_id, current.service_id);
+    if (!member) return { ok: false, error: ADMIN_MESSAGES.invalid };
+    if (member === "no-service") return { ok: false, error: ADMIN_MESSAGES.staffService };
+
+    const end = new Date(start.getTime() + (Date.parse(current.ends_at) - Date.parse(current.starts_at)));
+    const busyEnd = addMinutes(end, current.buffer_min);
+    if (!options.allowOutsideHours) {
+      const warning = await hoursWarning(salonId, member, start, busyEnd, salon.timezone);
+      if (warning) return { ok: false, error: warning, outsideHours: true };
+    }
+
+    const { data, error } = await db
+      .from("bookings")
+      .update({ starts_at: start.toISOString(), ends_at: end.toISOString(), staff_id: member.id })
+      .eq("id", bookingId)
+      .eq("salon_id", salonId)
+      .eq("status", current.status)
+      .eq("starts_at", current.starts_at)
+      .eq("staff_id", current.staff_id)
+      .select("*")
+      .maybeSingle<Booking>();
+
+    if (error?.code === "23P01") {
+      return { ok: false, error: await overlapMessage(salonId, member, start, busyEnd, salon.timezone, bookingId) };
+    }
+    if (error) {
+      console.error(`[data] rescheduleBooking(update) failed: ${error.code} ${error.message}`);
+      return { ok: false, error: error.code === "23503" || error.code === "23514" ? ADMIN_MESSAGES.invalid : ADMIN_MESSAGES.failed };
+    }
+    if (!data) return { ok: false, error: ADMIN_MESSAGES.changed };
+
+    // The reminder belonged to the old time.
+    const forget = await db.from("booking_notifications").delete().eq("booking_id", bookingId).eq("salon_id", salonId).eq("kind", "reminder");
+    if (forget.error) console.error(`[data] rescheduleBooking(reminder) failed: ${forget.error.code}`);
+
+    await audit(salonId, actor, "booking.move", bookingId, {
+      from: { starts_at: current.starts_at, staff_id: current.staff_id },
+      to: { starts_at: data.starts_at, staff_id: data.staff_id },
+    });
+    return { ok: true, booking: data };
+  } catch {
+    return { ok: false, error: ADMIN_MESSAGES.failed };
   }
 }

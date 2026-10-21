@@ -6,6 +6,7 @@
  * Errors are logged with their code only, never the e-mail address.
  */
 import "server-only";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { cache } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
@@ -24,6 +25,7 @@ export interface SignedInUser {
  * means nobody is signed in.
  */
 export const getSignedInUser = cache(async (): Promise<SignedInUser | null> => {
+  if (process.env.NODE_ENV === "test") return testSession.getStore() ?? null;
   try {
     await cookies(); // throws outside a request: nobody is signed in there
   } catch {
@@ -38,6 +40,20 @@ export const getSignedInUser = cache(async (): Promise<SignedInUser | null> => {
   }
   return { id: data.user.id, email: data.user.email ?? null };
 });
+
+const testSession = new AsyncLocalStorage<SignedInUser>();
+
+/**
+ * Tests only (`npm run test:live` sets NODE_ENV=test): runs `fn` as if `user`
+ * had a valid session, so the admin data functions can be tested against the
+ * real database. Membership in the salon is still checked for real
+ * (getSalonRole). Never active in `next dev` ("development") or a deployment
+ * ("production"): there, sessions come only from the cookie.
+ */
+export function runAsSignedInUser<T>(user: SignedInUser, fn: () => Promise<T>): Promise<T> {
+  if (process.env.NODE_ENV !== "test") throw new Error("runAsSignedInUser is for tests only (NODE_ENV=test)");
+  return testSession.run(user, fn);
+}
 
 export type SignInResult =
   | { ok: true; user: SignedInUser }

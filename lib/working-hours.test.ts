@@ -49,7 +49,7 @@ describe("workingHoursProblem: a booking entered by hand", () => {
   });
 
   test("a split day (9-12 and 13-17): a booking over the lunch break does not fit", () => {
-    const split = [
+    const split: HoursCheck["hours"] = [
       { staff_id: MAJA, weekday: 2, start_time: "09:00:00", end_time: "12:00:00" },
       { staff_id: MAJA, weekday: 2, start_time: "13:00:00", end_time: "17:00:00" },
     ];
@@ -59,12 +59,12 @@ describe("workingHoursProblem: a booking entered by hand", () => {
   });
 
   test("working hours that end at 24:00 (valid in Postgres)", () => {
-    const night = [{ staff_id: MAJA, weekday: 2, start_time: "20:00:00", end_time: "24:00:00" }];
+    const night: HoursCheck["hours"] = [{ staff_id: MAJA, weekday: 2, start_time: "20:00:00", end_time: "24:00:00" }];
     assert.equal(check(MAJA, "2026-09-22", "23:00", "23:55", { hours: night }), null);
   });
 
   test("the day the clocks go back (25. 10. 2026): local times stay right", () => {
-    const sunday = [{ staff_id: MAJA, weekday: 0, start_time: "09:00:00", end_time: "17:00:00" }];
+    const sunday: HoursCheck["hours"] = [{ staff_id: MAJA, weekday: 0, start_time: "09:00:00", end_time: "17:00:00" }];
     assert.equal(check(MAJA, "2026-10-25", "09:00", "09:30", { hours: sunday }), null);
     assert.equal(check(MAJA, "2026-10-25", "16:45", "17:00", { hours: sunday }), null);
     assert.equal(check(MAJA, "2026-10-25", "08:45", "09:15", { hours: sunday }), "not-working");

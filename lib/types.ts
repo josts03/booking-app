@@ -221,6 +221,31 @@ export type CancelBookingResult =
 
 // ---------- admin ----------
 
+/** A booking the salon enters by hand (lib/data.ts createManualBooking). Price, end and buffer come from the database. */
+export interface ManualBookingInput {
+  service_id: Uuid;
+  staff_id: Uuid;
+  starts_at: Timestamptz;
+  /** An existing customer of this salon, or a new one (found by phone if it already exists). */
+  customer:
+    | { id: Uuid }
+    | { first_name: string; last_name: string | null; phone: string; email: string | null };
+  customer_note: string | null;
+  internal_note: string | null;
+}
+
+/** Moving a booking (lib/data.ts rescheduleBooking): new start and/or staff member. */
+export interface BookingMove {
+  starts_at: Timestamptz;
+  staff_id: Uuid;
+}
+
+/** Result of the admin's booking changes. `error` is a friendly Slovenian sentence. */
+export type AdminBookingResult =
+  | { ok: true; booking: Booking }
+  /** `outsideHours`: allowed after the admin confirms (decision of 21. 10. 2026). */
+  | { ok: false; error: string; outsideHours?: boolean };
+
 /** A customer with the numbers the admin list shows. Cancelled bookings do not count. */
 export interface CustomerSummary {
   customer: Customer;
