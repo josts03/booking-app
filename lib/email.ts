@@ -1,5 +1,5 @@
 /**
- * E-mail to customers: templates (confirmation, reminder, cancellation) and sending
+ * E-mail to customers: templates (confirmation, reminder, reschedule, cancellation) and sending
  * through the Resend API with plain fetch (no library).
  *
  * - Subject contains the salon's name, the sender's display name is the salon,
@@ -215,16 +215,37 @@ export function reminderEmail(data: BookingEmailData, now: Date): RenderedEmail 
   );
 }
 
-/** Right after the customer cancelled online: what was cancelled, and where to book again. */
-export function cancellationEmail(data: BookingEmailData, now: Date): RenderedEmail {
+/**
+ * After a cancellation: what was cancelled, and where to book again. `by`:
+ * the customer (with the link) or the salon (from the admin).
+ */
+export function cancellationEmail(data: BookingEmailData, now: Date, by: "customer" | "salon" = "customer"): RenderedEmail {
   const salonName = oneLine(data.salon.name, 100);
   return render(
     data,
     {
       subject: `Termin je odpovedan – ${salonName}`,
       heading: "Termin je odpovedan",
-      lead: "Vaš termin je odpovedan. Hvala, ker ste nam sporočili.",
+      lead:
+        by === "salon"
+          ? "Salon je odpovedal vaš termin. Opravičujemo se za nevšečnost."
+          : "Vaš termin je odpovedan. Hvala, ker ste nam sporočili.",
       kind: "cancelled",
+    },
+    now,
+  );
+}
+
+/** After the salon moved the booking to another time or staff member: the new details. */
+export function rescheduleEmail(data: BookingEmailData, now: Date): RenderedEmail {
+  const salonName = oneLine(data.salon.name, 100);
+  return render(
+    data,
+    {
+      subject: `Termin je prestavljen – ${salonName}`,
+      heading: "Termin je prestavljen",
+      lead: "Salon je vaš termin prestavil. Spodaj je nov termin.",
+      kind: "upcoming",
     },
     now,
   );

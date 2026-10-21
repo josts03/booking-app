@@ -152,12 +152,12 @@ export interface Booking {
 }
 
 /** booking_notifications.kind */
-export type NotificationKind = "confirmation" | "reminder" | "cancellation";
+export type NotificationKind = "request" | "confirmation" | "reminder" | "reschedule" | "cancellation";
 
 /**
  * table: booking_notifications. Unique per (booking_id, kind, channel), so a
- * message is sent at most once. status is text: "pending" while sending, then
- * "sent" or "failed" (lib/notifications.ts).
+ * message is sent at most once; "reschedule" may repeat (006). status is text:
+ * "pending" while sending, then "sent" or "failed" (lib/notifications.ts).
  */
 export interface BookingNotification {
   id: Uuid;

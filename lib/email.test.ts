@@ -7,6 +7,7 @@ import {
   confirmationEmail,
   escapeHtml,
   reminderEmail,
+  rescheduleEmail,
   sendEmail,
   type BookingEmailData,
   type OutgoingEmail,
@@ -150,6 +151,26 @@ describe("cancellationEmail", () => {
     assert.ok(!email.text.includes("/odpoved/"));
     assert.ok(!email.html.includes("/odpoved/"));
     assert.ok(!email.text.includes("pokličite salon"));
+  });
+});
+
+describe("salon's own actions", () => {
+  test("rescheduleEmail: the new time, the salon's name, still a cancel link", () => {
+    const moved = { ...booking, starts_at: "2026-09-22T12:00:00.000Z", ends_at: "2026-09-22T12:30:00.000Z" };
+    const email = rescheduleEmail(emailData({ booking: moved, staffName: "Luka Kovač" }), NOW);
+    assert.equal(email.subject, "Termin je prestavljen – Frizerstvo Test");
+    assert.match(email.text, /Salon je vaš termin prestavil/);
+    assert.match(email.text, /Termin: torek, 22\. 9\. 2026 ob 14:00–14:30/);
+    assert.match(email.text, /Zaposleni: Luka Kovač/);
+    assert.ok(email.text.includes(`/odpoved/${booking.cancel_token}`));
+  });
+
+  test("cancellationEmail by the salon: says so and apologises; no thanks for telling us", () => {
+    const email = cancellationEmail(emailData({ booking: { ...booking, status: "cancelled" } }), NOW, "salon");
+    assert.equal(email.subject, "Termin je odpovedan – Frizerstvo Test");
+    assert.match(email.text, /Salon je odpovedal vaš termin/);
+    assert.ok(!email.text.includes("Hvala, ker ste nam sporočili"));
+    assert.ok(email.text.includes("Nova rezervacija: http://test.localhost:3000/rezervacija"));
   });
 });
 

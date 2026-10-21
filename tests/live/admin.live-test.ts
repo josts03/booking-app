@@ -19,6 +19,8 @@ import {
   rescheduleBooking,
 } from "../../lib/data";
 import { FIXTURE_SALON_ID, FIXTURE_TIMEZONE, buildFixtures } from "../../lib/fixtures";
+import type { OutgoingEmail, SendResult } from "../../lib/email";
+import { sendBookingConfirmation, sendCancellationNotice, sendRescheduleNotice } from "../../lib/notifications";
 import { adminDb } from "../../lib/supabase/admin";
 import type { AdminBookingResult, Booking, ManualBookingInput } from "../../lib/types";
 
@@ -337,6 +339,60 @@ describe("moving a booking", () => {
     assert.deepEqual(await asMember(() => rescheduleBooking(SALON, a.id, { starts_at: at(DAY, "16:30"), staff_id: MAJA }, { allowOutsideHours: false })), {
       ok: false,
       error: MSG.notAllowed,
+    });
+  });
+});
+
+describe("messages after the salon's actions (006, fake sender: nothing reaches Resend)", () => {
+  const env = process.env as Record<string, string | undefined>;
+  async function withFakeSender<T>(fn: (sent: OutgoingEmail[], deps: { now: () => Date; send: (m: OutgoingEmail) => Promise<SendResult> }) => Promise<T>) {
+    const saved = { RESEND_API_KEY: env.RESEND_API_KEY, EMAIL_FROM: env.EMAIL_FROM };
+    env.RESEND_API_KEY = "re_fake_for_tests";
+    env.EMAIL_FROM = "Termin <obvestila@example.com>";
+    const sent: OutgoingEmail[] = [];
+    try {
+      return await fn(sent, { now: () => new Date(), send: async (m) => (sent.push(m), { ok: true, id: `fake-${sent.length}` }) });
+    } finally {
+      Object.assign(env, saved);
+    }
+  }
+  const kinds = async (bookingId: string) =>
+    ((await adminDb().from("booking_notifications").select("kind, status").eq("booking_id", bookingId).order("sent_at")).data ?? []).map(
+      (r) => `${r.kind}:${r.status}`,
+    );
+
+  test("a pending booking: 'request received' first, the confirmation when the salon confirms", async () => {
+    await withFakeSender(async (sent, deps) => {
+      const booking = await made(await asMember(() => createManualBooking(SALON, manual({ starts_at: at(DAY, "16:00") }), { allowOutsideHours: false })));
+      await adminDb().from("bookings").update({ status: "pending" }).eq("id", booking.id);
+      await sendBookingConfirmation(booking.id, deps);
+      assert.ok((await asMember(() => changeBookingStatus(SALON, booking.id, "confirmed"))).ok);
+      await sendBookingConfirmation(booking.id, deps);
+      await sendBookingConfirmation(booking.id, deps); // a second click sends nothing more
+      assert.deepEqual(sent.map((m) => m.subject), [
+        "Prejeli smo vaš zahtevek za termin – Frizerstvo Test",
+        "Potrditev termina – Frizerstvo Test",
+      ]);
+      assert.deepEqual(await kinds(booking.id), ["request:sent", "confirmation:sent"]);
+    });
+  });
+
+  test("moved twice: two e-mails, each with the new time; cancelled by the salon: the salon's wording", async () => {
+    await withFakeSender(async (sent, deps) => {
+      const booking = await made(await asMember(() => createManualBooking(SALON, manual({ staff_id: LUKA, starts_at: at(DAY, "10:00") }), { allowOutsideHours: false })));
+      for (const hhmm of ["10:30", "11:15"]) {
+        assert.ok((await asMember(() => rescheduleBooking(SALON, booking.id, { starts_at: at(DAY, hhmm), staff_id: LUKA }, { allowOutsideHours: false }))).ok);
+        await sendRescheduleNotice(booking.id, deps);
+      }
+      assert.deepEqual(sent.map((m) => m.subject), ["Termin je prestavljen – Frizerstvo Test", "Termin je prestavljen – Frizerstvo Test"]);
+      assert.match(sent[0].text, / ob 10:30–11:00/);
+      assert.match(sent[1].text, / ob 11:15–11:45/);
+      assert.notEqual(sent[0].idempotencyKey, sent[1].idempotencyKey);
+
+      assert.ok((await asMember(() => changeBookingStatus(SALON, booking.id, "cancelled"))).ok);
+      await sendCancellationNotice(booking.id, deps, "salon");
+      assert.match(sent[2].text, /Salon je odpovedal vaš termin/);
+      assert.deepEqual(await kinds(booking.id), ["reschedule:sent", "reschedule:sent", "cancellation:sent"]);
     });
   });
 });
