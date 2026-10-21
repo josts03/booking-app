@@ -363,7 +363,7 @@ describe("messages after the salon's actions (006, fake sender: nothing reaches 
 
   test("a pending booking: 'request received' first, the confirmation when the salon confirms", async () => {
     await withFakeSender(async (sent, deps) => {
-      const booking = await made(await asMember(() => createManualBooking(SALON, manual({ starts_at: at(DAY, "16:00") }), { allowOutsideHours: false })));
+      const booking = await made(await asMember(() => createManualBooking(SALON, manual({ starts_at: at(DAY, "16:30") }), { allowOutsideHours: false })));
       await adminDb().from("bookings").update({ status: "pending" }).eq("id", booking.id);
       await sendBookingConfirmation(booking.id, deps);
       assert.ok((await asMember(() => changeBookingStatus(SALON, booking.id, "confirmed"))).ok);
