@@ -13,6 +13,7 @@ import {
   cancellationEmail,
   confirmationEmail,
   emailConfigured,
+  reminderEmail,
   rescheduleEmail,
   sendEmail,
   type RenderedEmail,
@@ -53,6 +54,14 @@ const cancellation = (by: "customer" | "salon"): Message => ({
   key: oncePerBooking,
 });
 
+/** Some hours before a confirmed booking (app/api/cron/reminders). Once per booking. */
+const REMINDER: Message = {
+  kind: () => "reminder",
+  statuses: ["confirmed"],
+  render: reminderEmail,
+  key: oncePerBooking,
+};
+
 /** A booking can be moved more than once: one e-mail per new time. */
 const RESCHEDULE: Message = {
   kind: () => "reschedule",
@@ -61,26 +70,31 @@ const RESCHEDULE: Message = {
   key: (data, kind) => `${kind}:${data.bookingId}:${data.booking.starts_at}:${data.staffName}`,
 };
 
-async function notify(message: Message, bookingId: string, deps: NotifyDeps): Promise<void> {
+/** What happened to one message (the cron reports the counts; nothing personal). */
+export type NotifyOutcome = "sent" | "failed" | "skipped";
+
+async function notify(message: Message, bookingId: string, deps: NotifyDeps): Promise<NotifyOutcome> {
   try {
     if (!emailConfigured()) {
       console.warn("[notify] e-mail is not configured (RESEND_API_KEY, EMAIL_FROM): nothing sent");
-      return;
+      return "skipped";
     }
     const data = await getNotificationData(bookingId);
-    if (!data?.to) return; // no booking, or no e-mail to send to
-    if (!message.statuses.includes(data.booking.status)) return;
+    if (!data?.to) return "skipped"; // no booking, or no e-mail to send to
+    if (!message.statuses.includes(data.booking.status)) return "skipped";
 
     const kind = message.kind(data);
     const claim = await claimNotification(data.salonId, data.bookingId, kind);
-    if (!claim) return; // already sent (or being sent) by someone else
+    if (!claim) return "skipped"; // already sent (or being sent) by someone else
 
     const email = message.render(data, deps.now());
     const result = await deps.send({ ...email, to: data.to, idempotencyKey: message.key(data, kind) });
     await finishNotification(claim, result.ok ? "sent" : "failed", result.ok ? result.id : null);
     if (!result.ok) console.error(`[notify] ${kind} for booking ${data.bookingId} not sent: ${result.reason}`);
+    return result.ok ? "sent" : "failed";
   } catch (error) {
     console.error(`[notify] message for booking ${bookingId} failed: ${error instanceof Error ? error.message : "?"}`);
+    return "failed";
   }
 }
 
@@ -89,23 +103,28 @@ async function notify(message: Message, bookingId: string, deps: NotifyDeps): Pr
  * while the salon confirms by hand; called again when the salon confirms such
  * a booking, it sends the real confirmation. Called with after(). Never throws.
  */
-export function sendBookingConfirmation(bookingId: string, deps: NotifyDeps = defaultDeps): Promise<void> {
-  return notify(CONFIRMATION, bookingId, deps);
+export async function sendBookingConfirmation(bookingId: string, deps: NotifyDeps = defaultDeps): Promise<void> {
+  await notify(CONFIRMATION, bookingId, deps);
+}
+
+/** The reminder before a confirmed booking, at most once. Never throws. */
+export function sendReminder(bookingId: string, deps: NotifyDeps = defaultDeps): Promise<NotifyOutcome> {
+  return notify(REMINDER, bookingId, deps);
 }
 
 /**
  * "Your booking is cancelled", only for a booking that really is cancelled.
  * `by`: the customer (cancel link) or the salon (admin). Never throws.
  */
-export function sendCancellationNotice(
+export async function sendCancellationNotice(
   bookingId: string,
   deps: NotifyDeps = defaultDeps,
   by: "customer" | "salon" = "customer",
 ): Promise<void> {
-  return notify(cancellation(by), bookingId, deps);
+  await notify(cancellation(by), bookingId, deps);
 }
 
 /** "Your booking was moved", with the new time and staff member. Never throws. */
-export function sendRescheduleNotice(bookingId: string, deps: NotifyDeps = defaultDeps): Promise<void> {
-  return notify(RESCHEDULE, bookingId, deps);
+export async function sendRescheduleNotice(bookingId: string, deps: NotifyDeps = defaultDeps): Promise<void> {
+  await notify(RESCHEDULE, bookingId, deps);
 }

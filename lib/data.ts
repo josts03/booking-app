@@ -31,7 +31,7 @@
 import "server-only";
 import { cache } from "react";
 import type { PostgrestError } from "@supabase/supabase-js";
-import { addDays, addMinutes, format, getDay, parseISO } from "date-fns";
+import { addDays, addMinutes, format, getDay, parseISO, subYears } from "date-fns";
 import { fromZonedTime } from "date-fns-tz";
 import { getSignedInUser, type SignedInUser } from "./auth";
 import { canChangeStatus, MOVABLE } from "./booking-status";
@@ -538,15 +538,35 @@ export async function updateCustomerNote(salonId: Uuid, customerId: Uuid, note: 
 }
 
 /**
+ * Overwrites a customer's personal data and the personal parts of their
+ * bookings (specs/security.md). Bookings first, the customer last: if a step
+ * fails, the customer still shows as not anonymized and is simply done again.
+ */
+async function eraseCustomer(salonId: Uuid, customerId: Uuid, now: Date): Promise<void> {
+  const db = adminDb();
+  const { error: bookingsError } = await db
+    .from("bookings")
+    .update({ contact_email: null, customer_note: null, internal_note: null })
+    .eq("salon_id", salonId)
+    .eq("customer_id", customerId);
+  if (bookingsError) fail("eraseCustomer(bookings)", bookingsError);
+
+  const { error } = await db
+    .from("customers")
+    .update({ ...ANONYMIZED_NAME, phone: null, email: null, notes: null, marketing_consent: false, anonymized_at: now.toISOString() })
+    .eq("id", customerId)
+    .eq("salon_id", salonId);
+  if (error) fail("eraseCustomer(customer)", error);
+}
+
+/**
  * Erasing a customer is anonymizing them (specs/security.md): name, phone,
  * e-mail, note and consent are overwritten and anonymized_at is set; their
  * bookings stay for the salon's statistics, without the booking's e-mail (005)
  * and both notes. Owner only (decision 1a of 22. 10. 2026). Not while the
  * customer still has future bookings (decision 2a): the salon cancels them
- * first, so nobody waits for a booking nobody can be told about.
- *
- * Bookings first, the customer last: if a step fails, the customer still shows
- * as not anonymized and the owner simply tries again. Running it twice is fine.
+ * first, so nobody waits for a booking nobody can be told about. Running it
+ * twice is fine.
  */
 export async function anonymizeCustomer(salonId: Uuid, customerId: Uuid, now: Date = new Date()): Promise<ManageResult<null>> {
   const actor = await ownerOnly(salonId, "anonymizeCustomer");
@@ -576,20 +596,7 @@ export async function anonymizeCustomer(salonId: Uuid, customerId: Uuid, now: Da
       };
     }
 
-    const { error: bookingsError } = await db
-      .from("bookings")
-      .update({ contact_email: null, customer_note: null, internal_note: null })
-      .eq("salon_id", salonId)
-      .eq("customer_id", customerId);
-    if (bookingsError) fail("anonymizeCustomer(bookings)", bookingsError);
-
-    const { error } = await db
-      .from("customers")
-      .update({ ...ANONYMIZED_NAME, phone: null, email: null, notes: null, marketing_consent: false, anonymized_at: now.toISOString() })
-      .eq("id", customerId)
-      .eq("salon_id", salonId);
-    if (error) fail("anonymizeCustomer(customer)", error);
-
+    await eraseCustomer(salonId, customerId, now);
     await audit(salonId, actor, "customer.anonymize", customerId, {}, "customer");
     return { ok: true, value: null, affected: [] };
   } catch {
@@ -1342,11 +1349,11 @@ const MANUAL_RANGE_DAYS = 2 * 365;
 /**
  * Records who did what in audit_log (service_role only, 003_rls.sql). A failed
  * write is logged and does not undo the change: the change itself is what the
- * salon needs.
+ * salon needs. `actor` null: the platform's own scheduled job.
  */
 async function audit(
   salonId: Uuid,
-  actor: SignedInUser,
+  actor: SignedInUser | null,
   action: string,
   entityId: Uuid,
   payload: Record<string, unknown>,
@@ -1354,7 +1361,7 @@ async function audit(
 ): Promise<void> {
   const { error } = await adminDb()
     .from("audit_log")
-    .insert({ salon_id: salonId, actor_user_id: actor.id, action, entity, entity_id: entityId, payload });
+    .insert({ salon_id: salonId, actor_user_id: actor?.id ?? null, action, entity, entity_id: entityId, payload });
   if (error) console.error(`[data] audit(${action}) failed: ${error.code} ${error.message}`);
 }
 
@@ -2212,4 +2219,136 @@ export async function createSalonWithOwner(input: NewSalonInput): Promise<Create
     if (newUserId) await db.auth.admin.deleteUser(newUserId);
     return { ok: false, error: PLATFORM_MESSAGES.failed };
   }
+}
+
+// ---------- platform jobs: reminders, retention, rate limits (week 11) ----------
+// Called without a user session: by app/api/cron/reminders (protected by
+// CRON_SECRET) and, for rate limits, by the public server actions.
+
+/**
+ * Confirmed bookings whose reminder is due: they start between the salon's
+ * reminder_hours_before minus and plus one hour from `now` (decision 2a; 0 = no
+ * reminders), in salons that take bookings (trial, active), and they have no
+ * reminder row yet. The hourly cron sees a booking in two runs; the
+ * booking_notifications row lets only one of them send (lib/notifications.ts).
+ * Soonest first, at most `limit` (the rest come in the next run).
+ */
+export async function getDueReminders(now: Date, limit = 100): Promise<Uuid[]> {
+  const db = adminDb();
+  const salons = await selectAll("getDueReminders(salons)", (from, to) =>
+    db
+      .from("salons")
+      .select("id, reminder_hours_before")
+      .in("subscription_status", ["trial", "active"])
+      .gt("reminder_hours_before", 0)
+      .order("id")
+      .range(from, to)
+      .returns<Pick<Salon, "id" | "reminder_hours_before">[]>(),
+  );
+  const byHours = new Map<number, Uuid[]>();
+  for (const salon of salons) byHours.set(salon.reminder_hours_before, [...(byHours.get(salon.reminder_hours_before) ?? []), salon.id]);
+
+  const candidates: Pick<Booking, "id" | "starts_at">[] = [];
+  for (const [hours, salonIds] of byHours) {
+    for (let i = 0; i < salonIds.length; i += 100) {
+      candidates.push(
+        ...(await selectAll("getDueReminders(bookings)", (from, to) =>
+          db
+            .from("bookings")
+            .select("id, starts_at")
+            .in("salon_id", salonIds.slice(i, i + 100))
+            .eq("status", "confirmed")
+            .gte("starts_at", addMinutes(now, (hours - 1) * 60).toISOString())
+            .lt("starts_at", addMinutes(now, (hours + 1) * 60).toISOString())
+            .order("id")
+            .range(from, to)
+            .returns<Pick<Booking, "id" | "starts_at">[]>(),
+        )),
+      );
+    }
+  }
+
+  const reminded = new Set<string>();
+  for (let i = 0; i < candidates.length; i += 100) {
+    const rows = await must(
+      "getDueReminders(notifications)",
+      db
+        .from("booking_notifications")
+        .select("booking_id")
+        .eq("kind", "reminder")
+        .eq("channel", "email")
+        .in("booking_id", candidates.slice(i, i + 100).map((b) => b.id))
+        .returns<{ booking_id: string }[]>(),
+    );
+    for (const row of rows) reminded.add(row.booking_id);
+  }
+  return candidates
+    .filter((b) => !reminded.has(b.id))
+    .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
+    .slice(0, limit)
+    .map((b) => b.id);
+}
+
+/**
+ * Retention (specs/security.md, decision 5a): a customer with no booking in the
+ * last three years and none in the future is anonymized, exactly like the
+ * button on their card (eraseCustomer); the bookings stay for the statistics.
+ * Customers created less than three years ago are left alone. At most `limit`
+ * per run: the cron runs every hour. Returns how many were anonymized.
+ */
+export async function anonymizeInactiveCustomers(now: Date, limit = 200): Promise<number> {
+  const cutoff = subYears(now, 3).toISOString();
+  // Anti-join: the embedded bookings are only those from the cutoff on, and the
+  // customer is kept only if there is none. The hint picks the plain foreign key
+  // (bookings also has the composite one to customers, 002_constraints.sql).
+  const inactive = await must(
+    "anonymizeInactiveCustomers(customers)",
+    adminDb()
+      .from("customers")
+      .select("id, salon_id, bookings!bookings_customer_id_fkey!left(id)")
+      .is("anonymized_at", null)
+      .lt("created_at", cutoff)
+      .gte("bookings.starts_at", cutoff)
+      .is("bookings", null)
+      .order("created_at")
+      .limit(limit)
+      .returns<{ id: string; salon_id: string }[]>(),
+  );
+  for (const customer of inactive) {
+    await eraseCustomer(customer.salon_id, customer.id, now);
+    await audit(customer.salon_id, null, "customer.anonymize", customer.id, { reason: "retention" }, "customer");
+  }
+  return inactive.length;
+}
+
+/**
+ * One hit in a rate-limit bucket. rate_limits gets one row per hit (count 1),
+ * so no counter has to be updated in place: two requests at once are two rows.
+ * window_start is the moment of the hit, with random microseconds so the unique
+ * (bucket, window_start) does not refuse two hits in the same millisecond.
+ */
+export async function recordRateLimitHit(bucket: string, at: Date): Promise<void> {
+  const micro = String(Math.floor(Math.random() * 1000)).padStart(3, "0");
+  const { error } = await adminDb()
+    .from("rate_limits")
+    .insert({ bucket, window_start: `${at.toISOString().slice(0, 23)}${micro}Z`, count: 1 });
+  if (error && error.code !== "23505") fail("recordRateLimitHit", error);
+}
+
+/** Hits in a bucket since `since` (a sliding window). */
+export async function countRateLimitHits(bucket: string, since: Date): Promise<number> {
+  return countRows(
+    "countRateLimitHits",
+    adminDb().from("rate_limits").select("id", { count: "exact", head: true }).eq("bucket", bucket).gte("window_start", since.toISOString()),
+  );
+}
+
+/** Removes hits older than `before` (the hourly cron keeps two days). Returns how many. */
+export async function deleteOldRateLimitHits(before: Date): Promise<number> {
+  const { count, error } = await adminDb()
+    .from("rate_limits")
+    .delete({ count: "exact" })
+    .lt("window_start", before.toISOString());
+  if (error) fail("deleteOldRateLimitHits", error);
+  return count ?? 0;
 }
