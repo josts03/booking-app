@@ -5,7 +5,7 @@ import { z } from "zod";
 import { createSalonWithOwner, PLATFORM_MESSAGES, setSalonStatus } from "@/lib/data";
 import { salonInviteEmail, sendEmail } from "@/lib/email";
 import { getSuperAccess, NO_SUPER_ACCESS } from "@/lib/super-access";
-import { SUBSCRIPTION_STATUSES } from "@/lib/super-admin";
+import { SUBSCRIPTION_STATUS_LABELS, SUBSCRIPTION_STATUSES } from "@/lib/super-admin";
 import { salonOrigin } from "@/lib/tenant";
 
 export type SuperState = {
@@ -22,7 +22,10 @@ function text(formData: FormData, key: string): string {
 
 const StatusSchema = z.object({ id: z.uuid(), status: z.enum(SUBSCRIPTION_STATUSES) });
 
-/** Switches a salon on or off (subscription_status). */
+/**
+ * Switches a salon on or off (subscription_status). The answer names the salon
+ * and its new status, so a click on the wrong card is noticed at once.
+ */
 export async function setStatusAction(_previous: SuperState, formData: FormData): Promise<SuperState> {
   const parsed = StatusSchema.safeParse({ id: text(formData, "id"), status: text(formData, "status") });
   if (!parsed.success) return { message: PLATFORM_MESSAGES.invalid };
@@ -33,7 +36,11 @@ export async function setStatusAction(_previous: SuperState, formData: FormData)
   if (!result.ok) return { message: result.error };
   // The salon's booking page and admin read the status too.
   revalidatePath("/", "layout");
-  return { ok: true, message: "Shranjeno." };
+  const { label, bookable } = SUBSCRIPTION_STATUS_LABELS[result.value.subscription_status];
+  return {
+    ok: true,
+    message: `${result.value.name}: status je zdaj »${label}« (${bookable ? "naročanje deluje" : "naročanje ne deluje"}).`,
+  };
 }
 
 /** Same as the salons_slug_format check (002) and SLUG_PATTERN in lib/data.ts. */
