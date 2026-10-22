@@ -1,6 +1,7 @@
 /**
  * E-mail to customers: templates (confirmation, reminder, reschedule, cancellation) and sending
- * through the Resend API with plain fetch (no library).
+ * through the Resend API with plain fetch (no library). Also the platform owner's
+ * invitation to a new salon's first user (salonInviteEmail).
  *
  * - Subject contains the salon's name, the sender's display name is the salon,
  *   Reply-To is salons.email: a customer's reply goes straight to the salon.
@@ -253,6 +254,68 @@ export function rescheduleEmail(data: BookingEmailData, now: Date): RenderedEmai
     },
     now,
   );
+}
+
+// ---------- the platform owner's invitation (/super) ----------
+
+export interface SalonInviteData {
+  salonName: string;
+  salonSlug: string;
+  ownerEmail: string;
+  /** One-time recovery token for a new account; null: an existing account signs in with its password. */
+  setPasswordToken: string | null;
+  /** The platform owner's address, for questions. */
+  replyTo: string | null;
+}
+
+/**
+ * To the first user of a new salon. A new account sets its password through
+ * the same /novo-geslo page as a forgotten password; an existing account is
+ * told it can now open this salon too. Links are built from the slug.
+ */
+export function salonInviteEmail(data: SalonInviteData): RenderedEmail {
+  const salonName = oneLine(data.salonName, 100);
+  const email = oneLine(data.ownerEmail, 254);
+  const origin = salonOrigin(data.salonSlug);
+  const isNew = data.setPasswordToken !== null;
+  const link = isNew
+    ? `${origin}/novo-geslo?token_hash=${encodeURIComponent(data.setPasswordToken!)}&type=recovery`
+    : `${origin}/prijava`;
+  const subject = isNew ? `Vabilo: spletno naročanje za ${salonName}` : `Dostop do salona ${salonName}`;
+  const heading = isNew ? "Vaše spletno naročanje je pripravljeno" : "Imate dostop do novega salona";
+  const paragraphs = isNew
+    ? [
+        `Za salon ${salonName} je pripravljen sistem za spletno naročanje strank. Stran za naročanje: ${origin}`,
+        "Za vstop v admin si najprej nastavite geslo s spodnjim gumbom.",
+        `Povezava velja eno uro. Če poteče, odprite ${origin}/pozabljeno-geslo in vpišite ${email}.`,
+      ]
+    : [`Vaš račun ${email} ima zdaj dostop do salona ${salonName}. Prijavite se z obstoječim geslom.`];
+  const button = isNew ? "Nastavite geslo" : "Prijava";
+  const footer = `To sporočilo ste prejeli, ker ste bili dodani kot lastnik salona ${salonName}.`;
+
+  const text = ["Pozdravljeni!", "", ...paragraphs.flatMap((p) => [p, ""]), `${button}: ${link}`, "", footer].join("\n");
+
+  const e = escapeHtml;
+  const html = `<!doctype html>
+<html lang="sl">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${e(subject)}</title></head>
+<body style="margin:0;padding:0;background:#faf8f5;color:#1c1917;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#faf8f5;"><tr><td align="center" style="padding:24px 12px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border:1px solid #e7e2db;border-top:6px solid #111111;border-radius:12px;">
+<tr><td style="padding:24px;">
+<p style="margin:0;font-size:14px;font-weight:700;">Termin</p>
+<h1 style="margin:8px 0 16px;font-size:22px;line-height:1.3;">${e(heading)}</h1>
+<p style="margin:0 0 12px;font-size:15px;">Pozdravljeni!</p>
+${paragraphs.map((p) => `<p style="margin:0 0 12px;font-size:15px;">${e(p)}</p>`).join("\n")}
+<p style="margin:16px 0 0;"><a href="${e(link)}" style="display:inline-block;padding:12px 20px;border-radius:10px;background:#111111;color:#ffffff;font-weight:600;text-decoration:none;">${e(button)}</a></p>
+</td></tr>
+</table>
+<p style="max-width:560px;margin:16px auto 0;font-size:12px;line-height:1.5;color:#57534e;">${e(footer)}</p>
+</td></tr></table>
+</body>
+</html>`;
+
+  return { subject: oneLine(subject, 200), html, text, fromName: "Termin", replyTo: data.replyTo ? oneLine(data.replyTo, 254) : null };
 }
 
 // ---------- sending (Resend) ----------

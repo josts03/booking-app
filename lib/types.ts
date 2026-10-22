@@ -320,3 +320,40 @@ export interface SalonSettingsInput {
   reminder_hours_before: number;
   confirmation_note: string | null;
 }
+
+// ---------- platform owner (/super, week 10) ----------
+
+/** One salon in the platform owner's list. */
+export interface PlatformSalon {
+  salon: Pick<Salon, "id" | "slug" | "name" | "subscription_status" | "trial_ends_at" | "created_at">;
+  /** Bookings created this calendar month (Europe/Ljubljana), any status. */
+  bookings_this_month: number;
+}
+
+export interface PlatformOverview {
+  /** By name. */
+  salons: PlatformSalon[];
+  /** Booking e-mails sent through Resend (booking_notifications "sent"), this month and today. */
+  emails_this_month: number;
+  emails_today: number;
+}
+
+/** The platform owner's "new salon" form. */
+export interface NewSalonInput {
+  name: string;
+  /** The subdomain: slug.domena.si */
+  slug: string;
+  owner_email: string;
+}
+
+export type CreateSalonResult =
+  | {
+      ok: true;
+      salon: Salon;
+      /** isNew: a new account, which first sets a password with `setPasswordToken`. */
+      owner: { email: string; isNew: boolean };
+      /** One-time token for /novo-geslo (a recovery link); null for an existing account or if it could not be made. */
+      setPasswordToken: string | null;
+    }
+  /** `error` is a friendly Slovenian sentence. */
+  | { ok: false; error: string };

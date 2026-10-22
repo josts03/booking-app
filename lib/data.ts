@@ -22,6 +22,7 @@
  * layout's check can be skipped by Next.js on partial renders, and a server
  * action can be called without its page. Pages and actions also check first
  * (lib/admin-access.ts), so the user gets a friendly page instead of an error.
+ * The platform owner's functions (/super) check superOnly() the same way.
  *
  * Errors: a failed query is logged (code and message, never row values) and
  * thrown; error.tsx files show a friendly sentence. createBooking instead
@@ -37,6 +38,7 @@ import { canChangeStatus, MOVABLE } from "./booking-status";
 import { formatTime, localDay } from "./format";
 import { isE164, phoneSearchDigits } from "./phone";
 import { prostiTermini, type Interval } from "./slots";
+import { isSuperAdminEmail, SUBSCRIPTION_STATUSES } from "./super-admin";
 import { adminDb } from "./supabase/admin";
 import { workingHoursProblem } from "./working-hours";
 import { publicDb } from "./supabase/public";
@@ -49,6 +51,7 @@ import type {
   BookingStatus,
   CancelBookingResult,
   CreateBookingResult,
+  CreateSalonResult,
   Customer,
   CustomerExport,
   CustomerSummary,
@@ -57,7 +60,10 @@ import type {
   ManageResult,
   ManualBookingInput,
   NewBooking,
+  NewSalonInput,
   NotificationKind,
+  PlatformOverview,
+  PlatformSalon,
   Salon,
   SalonSettingsInput,
   SaveServiceResult,
@@ -67,6 +73,7 @@ import type {
   StaffHours,
   StaffInput,
   StaffService,
+  SubscriptionStatus,
   TimeOff,
   Timestamptz,
   Uuid,
@@ -2021,5 +2028,188 @@ export async function updateSalonSettings(salonId: Uuid, input: SalonSettingsInp
     return { ok: true, value: data, affected: [] };
   } catch {
     return { ok: false, error: MANAGE_MESSAGES.failed };
+  }
+}
+
+// ---------- platform owner: /super (week 10) ----------
+
+/** The time zone of the platform's months and days. */
+export const PLATFORM_TIMEZONE = "Europe/Ljubljana";
+
+/** Subdomains that are never a salon: the platform's own names. */
+const RESERVED_SLUGS = new Set(["www", "admin", "super", "api", "app", "mail", "email", "smtp", "status", "help", "pomoc", "blog", "static", "cdn"]);
+
+const EMAIL_PATTERN = /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/;
+
+export const PLATFORM_MESSAGES = {
+  invalid: "Preverite vnos.",
+  slugTaken: "Ta poddomena je že zasedena. Izberite drugo.",
+  slugReserved: "Te poddomene ni mogoče uporabiti. Izberite drugo.",
+  salonNotFound: "Salona ni mogoče najti. Osvežite stran.",
+  failed: "Sprememb trenutno ni mogoče shraniti. Poskusite znova čez nekaj minut.",
+} as const;
+
+/**
+ * Platform data covers every salon. Refuses unless the signed-in user is the
+ * platform owner (SUPER_ADMIN_EMAIL, lib/super-admin.ts), whatever page or
+ * action calls it.
+ */
+async function superOnly(context: string): Promise<SignedInUser> {
+  const user = await getSignedInUser();
+  if (user && isSuperAdminEmail(user.email)) return user;
+  console.error(`[data] ${context} refused: not the platform owner`);
+  throw new Error(`No platform access: ${context}`);
+}
+
+/** Exact row count of a head-only query. */
+async function countRows(context: string, query: PromiseLike<{ count: number | null; error: PostgrestError | null }>): Promise<number> {
+  const { count, error } = await query;
+  if (error) fail(context, error);
+  return count ?? 0;
+}
+
+/**
+ * Every salon with its bookings this month, and the booking e-mails sent this
+ * month and today (for the Resend quota). Auth e-mails (password reset) go
+ * through Supabase and are not counted here.
+ */
+export async function getPlatformOverview(now: Date = new Date()): Promise<PlatformOverview> {
+  await superOnly("getPlatformOverview");
+  const db = adminDb();
+  const today = localDay(now, PLATFORM_TIMEZONE);
+  const monthStart = fromZonedTime(`${today.slice(0, 7)}-01T00:00:00`, PLATFORM_TIMEZONE).toISOString();
+  const dayStart = fromZonedTime(`${today}T00:00:00`, PLATFORM_TIMEZONE).toISOString();
+
+  const salons = await selectAll("getPlatformOverview(salons)", (from, to) =>
+    db
+      .from("salons")
+      .select("id, slug, name, subscription_status, trial_ends_at, created_at")
+      .order("id")
+      .range(from, to)
+      .returns<PlatformSalon["salon"][]>(),
+  );
+  const sent = () => db.from("booking_notifications").select("id", { count: "exact", head: true }).eq("status", "sent");
+  const [perSalon, emailsThisMonth, emailsToday] = await Promise.all([
+    Promise.all(
+      salons.map((salon) =>
+        countRows(
+          "getPlatformOverview(bookings)",
+          db.from("bookings").select("id", { count: "exact", head: true }).eq("salon_id", salon.id).gte("created_at", monthStart),
+        ),
+      ),
+    ),
+    countRows("getPlatformOverview(emails month)", sent().gte("sent_at", monthStart)),
+    countRows("getPlatformOverview(emails today)", sent().gte("sent_at", dayStart)),
+  ]);
+
+  return {
+    salons: salons
+      .map((salon, i) => ({ salon, bookings_this_month: perSalon[i] }))
+      .sort((a, b) => a.salon.name.localeCompare(b.salon.name, "sl")),
+    emails_this_month: emailsThisMonth,
+    emails_today: emailsToday,
+  };
+}
+
+/**
+ * Switches a salon on or off (specs/mvp.md): only trial and active salons take
+ * bookings and show their booking page (003_rls.sql, lib/current-salon.ts).
+ * Salon admins cannot change this column themselves (column grants, 003).
+ */
+export async function setSalonStatus(salonId: Uuid, status: SubscriptionStatus): Promise<ManageResult<Salon>> {
+  const actor = await superOnly("setSalonStatus");
+  if (!isUuid(salonId) || !(SUBSCRIPTION_STATUSES as readonly string[]).includes(status)) return { ok: false, error: PLATFORM_MESSAGES.invalid };
+  try {
+    const db = adminDb();
+    const current = await must(
+      "setSalonStatus(current)",
+      db.from("salons").select("subscription_status").eq("id", salonId).maybeSingle<Pick<Salon, "subscription_status">>(),
+    );
+    if (!current) return { ok: false, error: PLATFORM_MESSAGES.salonNotFound };
+    const { data, error } = await db.from("salons").update({ subscription_status: status }).eq("id", salonId).select("*").single<Salon>();
+    if (error) fail("setSalonStatus(update)", error);
+    await audit(salonId, actor, "salon.status", salonId, { from: current.subscription_status, to: status }, "salon");
+    return { ok: true, value: data, affected: [] };
+  } catch {
+    return { ok: false, error: PLATFORM_MESSAGES.failed };
+  }
+}
+
+/** The Auth user with this e-mail (lower case), or null. The admin API has no lookup by e-mail. */
+async function authUserIdByEmail(email: string): Promise<string | null> {
+  const db = adminDb();
+  for (let page = 1; ; page++) {
+    const { data, error } = await db.auth.admin.listUsers({ page, perPage: 200 });
+    if (error) {
+      console.error(`[data] listUsers failed: ${error.code ?? error.name}`);
+      throw new Error("listUsers failed");
+    }
+    const user = data.users.find((u) => u.email?.toLowerCase() === email);
+    if (user) return user.id;
+    if (data.users.length < 200) return null;
+  }
+}
+
+/**
+ * A new salon (trial, 14 days, the database's defaults) and its first user as
+ * owner (specs/mvp.md). A new account gets no password: the caller e-mails a
+ * one-time link to /novo-geslo (`setPasswordToken`, the same recovery link the
+ * "forgotten password" flow uses). An existing account (e.g. the owner of a
+ * second salon) simply gets access too.
+ *
+ * All or nothing: if a step fails, the salon and a newly made account are
+ * removed again. Logs error codes only, never the e-mail address.
+ */
+export async function createSalonWithOwner(input: NewSalonInput): Promise<CreateSalonResult> {
+  const actor = await superOnly("createSalonWithOwner");
+  const name = input.name.trim();
+  const slug = input.slug.trim().toLowerCase();
+  const email = input.owner_email.trim().toLowerCase();
+  if (!name || name.length > 80 || slug.length < 2 || slug.length > 40 || !SLUG_PATTERN.test(slug) || email.length > 254 || !EMAIL_PATTERN.test(email)) {
+    return { ok: false, error: PLATFORM_MESSAGES.invalid };
+  }
+  if (RESERVED_SLUGS.has(slug)) return { ok: false, error: PLATFORM_MESSAGES.slugReserved };
+
+  const db = adminDb();
+  let salon: Salon | null = null;
+  let newUserId: string | null = null;
+  try {
+    const inserted = await db.from("salons").insert({ name, slug }).select("*").single<Salon>();
+    if (inserted.error?.code === "23505") return { ok: false, error: PLATFORM_MESSAGES.slugTaken };
+    if (inserted.error) fail("createSalonWithOwner(salon)", inserted.error);
+    salon = inserted.data;
+
+    let userId: string | null;
+    const created = await db.auth.admin.createUser({ email, email_confirm: true });
+    if (created.data.user) {
+      userId = newUserId = created.data.user.id;
+    } else if (created.error?.code === "email_exists") {
+      userId = await authUserIdByEmail(email);
+    } else {
+      console.error(`[data] createUser failed: ${created.error?.code ?? created.error?.name ?? "no user"}`);
+      throw new Error("createUser failed");
+    }
+    if (!userId) throw new Error("existing user not found");
+
+    const member = await db.from("salon_users").insert({ salon_id: salon.id, user_id: userId, role: "owner" });
+    if (member.error) fail("createSalonWithOwner(member)", member.error);
+
+    let setPasswordToken: string | null = null;
+    if (newUserId) {
+      const link = await db.auth.admin.generateLink({ type: "recovery", email });
+      // Without a link the owner still gets in through "Ste pozabili geslo?" on their salon's sign-in page.
+      if (link.error) console.error(`[data] generateLink failed: ${link.error.code ?? link.error.name}`);
+      else setPasswordToken = link.data.properties.hashed_token;
+    }
+
+    await audit(salon.id, actor, "salon.create", salon.id, { slug, owner: newUserId ? "new" : "existing" }, "salon");
+    return { ok: true, salon, owner: { email, isNew: newUserId !== null }, setPasswordToken };
+  } catch {
+    if (salon) {
+      const { error } = await db.from("salons").delete().eq("id", salon.id); // cascades to salon_users
+      if (error) console.error(`[data] createSalonWithOwner undo failed: ${error.code}`);
+    }
+    if (newUserId) await db.auth.admin.deleteUser(newUserId);
+    return { ok: false, error: PLATFORM_MESSAGES.failed };
   }
 }

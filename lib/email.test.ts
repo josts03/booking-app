@@ -8,6 +8,7 @@ import {
   escapeHtml,
   reminderEmail,
   rescheduleEmail,
+  salonInviteEmail,
   sendEmail,
   type BookingEmailData,
   type OutgoingEmail,
@@ -182,6 +183,35 @@ test("007: the salon's own sentence is in confirmations and reminders, escaped, 
   assert.ok(reminderEmail(emailData({ salon: withNote }), NOW).text.includes("Parkirate lahko za hišo"));
   const cancelled = cancellationEmail(emailData({ salon: withNote, booking: { ...booking, status: "cancelled" } }), NOW);
   assert.ok(!cancelled.text.includes("Parkirate"));
+});
+
+describe("salonInviteEmail (/super, a new salon's first user)", () => {
+  const invite = { salonName: "Studio <b>Lepota</b>", salonSlug: "lepota", ownerEmail: "lastnica@example.com", replyTo: "platforma@example.com" };
+
+  test("a new account: a one-time link to /novo-geslo on the salon's own address", () => {
+    const email = salonInviteEmail({ ...invite, setPasswordToken: "abc123_-x" });
+    const link = "http://lepota.localhost:3000/novo-geslo?token_hash=abc123_-x&type=recovery";
+    assert.equal(email.subject, "Vabilo: spletno naročanje za Studio <b>Lepota</b>");
+    assert.ok(email.text.includes(`Nastavite geslo: ${link}`));
+    assert.ok(email.html.includes(`href="${link.replace(/&/g, "&amp;")}"`));
+    assert.match(email.text, /pozabljeno-geslo in vpišite lastnica@example\.com/);
+    assert.equal(email.fromName, "Termin");
+    assert.equal(email.replyTo, "platforma@example.com");
+  });
+
+  test("an existing account: told to sign in, no token", () => {
+    const email = salonInviteEmail({ ...invite, setPasswordToken: null });
+    assert.equal(email.subject, "Dostop do salona Studio <b>Lepota</b>");
+    assert.ok(email.text.includes("Prijava: http://lepota.localhost:3000/prijava"));
+    assert.ok(!email.text.includes("token_hash"));
+  });
+
+  test("the salon's name is escaped in HTML; the token is URL-encoded", () => {
+    const email = salonInviteEmail({ ...invite, setPasswordToken: "a&b" });
+    assert.ok(!email.html.includes("<b>Lepota</b>"));
+    assert.ok(email.html.includes("Studio &lt;b&gt;Lepota&lt;/b&gt;"));
+    assert.ok(email.text.includes("token_hash=a%26b&type=recovery"));
+  });
 });
 
 test("escapeHtml", () => {
