@@ -94,7 +94,13 @@ export async function createSalonAction(_previous: SuperState, formData: FormDat
     idempotencyKey: `invite:${salon.id}`,
   });
   if (!sent.ok) {
-    return { ok: true, message: `Salon ${salon.name} je ustvarjen, e-pošte z vabilom pa ni bilo mogoče poslati. ${fallback}` };
+    // Resend's test sender delivers only to the Resend account's own address, and
+    // Supabase's reset e-mails go through the same Resend, so the fallback fails too.
+    const testSender = /@resend\.dev>?\s*$/i.test(process.env.EMAIL_FROM ?? "");
+    const hint = testSender
+      ? "Resend s testnim pošiljateljem (@resend.dev) pošilja samo na e-naslov vašega Resend računa, zato tudi pozabljeno geslo ne bo delovalo. Za vabila drugim naslovom v Resendu preverite svojo domeno."
+      : fallback;
+    return { ok: true, message: `Salon ${salon.name} je ustvarjen, e-pošte z vabilom pa ni bilo mogoče poslati. ${hint}` };
   }
   return {
     ok: true,
