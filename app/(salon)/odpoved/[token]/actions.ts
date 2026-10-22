@@ -1,11 +1,13 @@
 "use server";
 
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { z } from "zod";
 import { getCurrentSalon, isBookable } from "@/lib/current-salon";
-import { cancelBookingByToken } from "@/lib/data";
+import { cancelBookingByToken, noteRateLimitHit, rateLimitReached } from "@/lib/data";
 import { sendCancellationNotice } from "@/lib/notifications";
+import { clientIp, RATE_LIMITS, rateLimitBucket } from "@/lib/rate-limit";
 
 export type CancelState = { message: string } | null;
 
@@ -20,8 +22,17 @@ const MESSAGES = {
  * Cancels the booking of the link. Runs on the server: the salon comes from
  * the host, the token is compared in full, and the deadline is checked again
  * in the database (lib/data.ts cancelBookingByToken), whatever the page showed.
+ * At most 20 attempts per IP address an hour (specs/security.md).
  */
 export async function cancelBookingAction(_previous: CancelState, formData: FormData): Promise<CancelState> {
+  const ip = clientIp(await headers());
+  if (ip) {
+    const now = new Date();
+    const bucket = rateLimitBucket(RATE_LIMITS.cancelPerIp, ip);
+    if (await rateLimitReached(bucket, RATE_LIMITS.cancelPerIp, now)) return { message: RATE_LIMITS.cancelPerIp.message };
+    await noteRateLimitHit(bucket, now);
+  }
+
   const token = z.uuid().safeParse(formData.get("token"));
   if (!token.success) return { message: MESSAGES["not-found"] };
 

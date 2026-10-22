@@ -2343,6 +2343,27 @@ export async function countRateLimitHits(bucket: string, since: Date): Promise<n
   );
 }
 
+/**
+ * Whether `bucket` already has `limit` hits within the last `windowMs`. Fails
+ * open (logged): a broken counter must not stop bookings or sign-ins.
+ */
+export async function rateLimitReached(bucket: string, rule: { limit: number; windowMs: number }, now: Date): Promise<boolean> {
+  try {
+    return (await countRateLimitHits(bucket, new Date(now.getTime() - rule.windowMs))) >= rule.limit;
+  } catch {
+    return false;
+  }
+}
+
+/** recordRateLimitHit that never throws (logged): the request itself already succeeded or is answered anyway. */
+export async function noteRateLimitHit(bucket: string, now: Date): Promise<void> {
+  try {
+    await recordRateLimitHit(bucket, now);
+  } catch {
+    // logged by fail()
+  }
+}
+
 /** Removes hits older than `before` (the hourly cron keeps two days). Returns how many. */
 export async function deleteOldRateLimitHits(before: Date): Promise<number> {
   const { count, error } = await adminDb()

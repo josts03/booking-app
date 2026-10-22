@@ -16,9 +16,12 @@ import {
   countRateLimitHits,
   deleteOldRateLimitHits,
   getDueReminders,
+  noteRateLimitHit,
+  rateLimitReached,
   recordRateLimitHit,
 } from "../../lib/data";
 import { sendReminder, type NotifyDeps } from "../../lib/notifications";
+import { RATE_LIMITS, rateLimitBucket } from "../../lib/rate-limit";
 import { adminDb } from "../../lib/supabase/admin";
 import type { Booking } from "../../lib/types";
 
@@ -173,6 +176,17 @@ describe("rate-limit counters", () => {
 
     assert.ok((await deleteOldRateLimitHits(addDays(now, -2))) >= 1);
     assert.equal(await countRateLimitHits(bucket, addDays(now, -4)), 3);
+    await adminDb().from("rate_limits").delete().eq("bucket", bucket);
+  });
+
+  test("5 bookings from one IP in an hour: the sixth is refused; older hits do not count", async () => {
+    const rule = RATE_LIMITS.bookingPerIp;
+    const bucket = rateLimitBucket(rule, `203.0.113.${run}`);
+    await noteRateLimitHit(bucket, addMinutes(now, -61)); // outside the hour
+    for (let i = 0; i < 4; i++) await noteRateLimitHit(bucket, addMinutes(now, -i));
+    assert.equal(await rateLimitReached(bucket, rule, now), false, "4 in the hour: a fifth is allowed");
+    await noteRateLimitHit(bucket, now);
+    assert.equal(await rateLimitReached(bucket, rule, now), true, "5 in the hour: the sixth is refused");
     await adminDb().from("rate_limits").delete().eq("bucket", bucket);
   });
 });

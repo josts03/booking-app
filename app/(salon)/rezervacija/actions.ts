@@ -1,13 +1,15 @@
 "use server";
 
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { z } from "zod";
 import { getCurrentSalon, isBookable } from "@/lib/current-salon";
-import { BOOKING_MESSAGES, createBooking, getFreeSlots } from "@/lib/data";
+import { BOOKING_MESSAGES, createBooking, getFreeSlots, noteRateLimitHit, rateLimitReached } from "@/lib/data";
 import { localDay } from "@/lib/format";
 import { sendBookingConfirmation } from "@/lib/notifications";
 import { normalizePhone } from "@/lib/phone";
+import { clientIp, RATE_LIMITS, rateLimitBucket } from "@/lib/rate-limit";
 
 export type FieldName = "first_name" | "last_name" | "phone" | "email" | "note" | "terms";
 
@@ -69,7 +71,9 @@ function text(formData: FormData, key: string): string {
  * (or "any") and which start time; lib/data.ts createBooking checks all of it
  * again against the database.
  *
- * TODO(week 11): rate limiting and Turnstile (specs/security.md).
+ * Rate limits (specs/security.md): 5 bookings per IP address an hour, 3 per
+ * phone number a day. Only bookings that were made count, so a visitor whose
+ * time was taken meanwhile can simply try another one.
  */
 export async function submitBooking(_previous: FormState, formData: FormData): Promise<FormState> {
   const values = {
@@ -117,6 +121,16 @@ export async function submitBooking(_previous: FormState, formData: FormData): P
   const { service, staff, time } = choice.data;
   const start = new Date(time);
 
+  const now = new Date();
+  const ip = clientIp(await headers());
+  const limits = [
+    ...(ip ? [{ rule: RATE_LIMITS.bookingPerIp, bucket: rateLimitBucket(RATE_LIMITS.bookingPerIp, ip) }] : []),
+    { rule: RATE_LIMITS.bookingPerPhone, bucket: rateLimitBucket(RATE_LIMITS.bookingPerPhone, contact.data.phone) },
+  ];
+  for (const { rule, bucket } of limits) {
+    if (await rateLimitReached(bucket, rule, now)) return { message: rule.message, values };
+  }
+
   // "Anyone available": everyone free at that start time, in display order. If
   // the first is taken in the meantime, the next one gets the booking.
   let candidates = [staff];
@@ -154,6 +168,7 @@ export async function submitBooking(_previous: FormState, formData: FormData): P
       source: "online",
     });
     if (result.ok) {
+      for (const { bucket } of limits) await noteRateLimitHit(bucket, now);
       // The confirmation e-mail goes out after the response: the visitor does
       // not wait for Resend, and a failed e-mail never fails the booking.
       const bookingId = result.booking.id;

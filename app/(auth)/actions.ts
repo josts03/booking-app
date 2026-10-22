@@ -1,10 +1,12 @@
 "use server";
 
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { requestPasswordReset, setNewPassword, signInWithPassword, signOut } from "@/lib/auth";
 import { getCurrentSalon } from "@/lib/current-salon";
-import { getSalonRole } from "@/lib/data";
+import { getSalonRole, noteRateLimitHit, rateLimitReached } from "@/lib/data";
+import { clientIp, RATE_LIMITS, rateLimitBucket } from "@/lib/rate-limit";
 import { safeNextPath } from "@/lib/safe-next";
 import { isSuperAdminEmail, isSuperPath } from "@/lib/super-admin";
 import { salonOrigin } from "@/lib/tenant";
@@ -39,7 +41,8 @@ function text(formData: FormData, key: string): string {
  * With next=/super (the platform owner's dashboard, on the main domain) no
  * salon is needed: only the SUPER_ADMIN_EMAIL account stays signed in.
  *
- * TODO(week 11): limit attempts per e-mail and IP (rate_limits, specs/security.md).
+ * At most 10 attempts per IP address in 15 minutes (specs/security.md, decision
+ * 3a); Supabase Auth limits attempts as well.
  */
 export async function signInAction(_previous: SignInState, formData: FormData): Promise<SignInState> {
   const email = text(formData, "email").trim();
@@ -50,6 +53,14 @@ export async function signInAction(_previous: SignInState, formData: FormData): 
       errors: { email: fieldErrors.email?.[0], password: fieldErrors.password?.[0] },
       email,
     };
+  }
+
+  const ip = clientIp(await headers());
+  if (ip) {
+    const now = new Date();
+    const bucket = rateLimitBucket(RATE_LIMITS.signInPerIp, ip);
+    if (await rateLimitReached(bucket, RATE_LIMITS.signInPerIp, now)) return { message: RATE_LIMITS.signInPerIp.message, email };
+    await noteRateLimitHit(bucket, now);
   }
 
   const next = safeNextPath(formData.get("next"));
