@@ -46,7 +46,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           <SalonLogo salon={salon} />
           <span className="truncate font-bold tracking-tight">{salon.name}</span>
         </div>
-        <AdminNav variant="side" />
+        <AdminNav variant="side" isOwner={access.role === "owner"} />
         <div className="mt-auto space-y-2 border-t border-line px-1 pt-4">
           {user.email && <p className="truncate text-xs text-ink-muted">{user.email}</p>}
           <SignOutButton className="w-full" />
@@ -64,7 +64,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       </div>
 
       <div className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-surface pb-[env(safe-area-inset-bottom)] md:hidden">
-        <AdminNav variant="bottom" />
+        <AdminNav variant="bottom" isOwner={access.role === "owner"} />
       </div>
     </div>
   );

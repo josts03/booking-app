@@ -2,8 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { getAdminAccess, NO_ADMIN_ACCESS } from "@/lib/admin-access";
-import { createService, updateService } from "@/lib/data";
+import { getAdminAccess, NO_ADMIN_ACCESS, OWNER_ONLY } from "@/lib/admin-access";
+import { createService, setServiceStaff, updateService } from "@/lib/data";
 
 export type ServiceField = "name" | "category" | "duration" | "buffer" | "price";
 
@@ -46,8 +46,9 @@ const ServiceSchema = z.object({
 const FIELD_NAMES: ServiceField[] = ["name", "category", "duration", "buffer", "price"];
 
 /**
- * Creates (no `id`) or updates a service of the current salon. Only for a
- * signed-in member of this salon (lib/admin-access.ts).
+ * Creates (no `id`) or updates a service of the current salon, and who
+ * performs it (the "staff" checkboxes). Only the salon's owner (decision of
+ * 22. 10. 2026); lib/data.ts checks that again.
  */
 export async function saveService(
   _previous: ServiceFormState,
@@ -68,7 +69,9 @@ export async function saveService(
   if (!access.ok) {
     return { message: NO_ADMIN_ACCESS, values };
   }
+  if (access.role !== "owner") return { message: OWNER_ONLY, values };
   const { salon } = access;
+  const staffIds = formData.getAll("staff").filter((v): v is string => typeof v === "string" && z.uuid().safeParse(v).success);
 
   const parsed = ServiceSchema.safeParse(values);
   if (!parsed.success) {
@@ -99,6 +102,8 @@ export async function saveService(
 
   if (!result.ok) return { message: result.error, values };
 
+  const performers = await setServiceStaff(salon.id, result.service.id, staffIds);
   revalidatePath("/admin", "layout");
+  if (!performers.ok) return { message: `Storitev je shranjena, izvajalcev pa ni bilo mogoče shraniti: ${performers.error}`, values };
   return { ok: true, message: parsed.data.id ? "Shranjeno." : "Storitev je dodana.", values };
 }

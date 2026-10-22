@@ -20,9 +20,15 @@ function priceText(cents: number): string {
 export function ServiceForm({
   service,
   categories,
+  staff,
+  performers,
 }: {
   service?: Service;
   categories: string[];
+  /** Active staff members, for "who performs it". */
+  staff: { id: string; name: string }[];
+  /** Ids of the staff who perform this service now. */
+  performers: string[];
 }) {
   const [state, action, pending] = useActionState<ServiceFormState, FormData>(saveService, null);
   const values = state?.values;
@@ -102,6 +108,28 @@ export function ServiceForm({
         />
         Aktivna
       </label>
+
+      <fieldset className="col-span-2 lg:col-span-full">
+        <legend className="mb-1 text-xs font-medium text-ink-muted">Kdo izvaja</legend>
+        <div className="flex flex-wrap gap-2">
+          {staff.length === 0 && <span className="text-sm text-ink-muted">Najprej dodajte zaposlene.</span>}
+          {staff.map((member) => (
+            <label
+              key={member.id}
+              className="flex min-h-11 items-center gap-2 rounded-full border border-line bg-canvas px-3 text-sm has-[:checked]:border-brand has-[:checked]:bg-brand-soft"
+            >
+              <input
+                type="checkbox"
+                name="staff"
+                value={member.id}
+                defaultChecked={service ? performers.includes(member.id) : true}
+                className="size-5 accent-brand"
+              />
+              {member.name}
+            </label>
+          ))}
+        </div>
+      </fieldset>
 
       <button type="submit" disabled={pending} className={`${buttonPrimary} col-span-2 lg:col-span-1`}>
         {pending ? "Shranjujem …" : service ? "Shrani" : "Dodaj"}

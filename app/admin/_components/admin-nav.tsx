@@ -31,16 +31,24 @@ const items = [
   },
 ];
 
+/** Only for the salon's owner (decision of 22. 10. 2026). */
+const settingsItem = {
+  href: "/admin/nastavitve",
+  label: "Nastavitve",
+  icon: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm7.4-3a7.5 7.5 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7.6 7.6 0 0 0-2-1.2L14.5 3h-4l-.4 2.6a7.6 7.6 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6a7.5 7.5 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1c.6.5 1.3.9 2 1.2l.4 2.6h4l.4-2.6c.7-.3 1.4-.7 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2Z",
+};
+
 /**
  * Main navigation. `bottom` is the phone version (fixed tab bar under the
  * thumb), `side` the desktop sidebar. Same links, different layout.
  */
-export function AdminNav({ variant }: { variant: "bottom" | "side" }) {
+export function AdminNav({ variant, isOwner = false }: { variant: "bottom" | "side"; isOwner?: boolean }) {
   const pathname = usePathname();
+  const entries = isOwner ? [...items, settingsItem] : items;
 
   const list =
     variant === "bottom"
-      ? "grid grid-cols-5"
+      ? `grid ${isOwner ? "grid-cols-6" : "grid-cols-5"}`
       : "flex flex-col gap-1";
   const item =
     variant === "bottom"
@@ -50,7 +58,7 @@ export function AdminNav({ variant }: { variant: "bottom" | "side" }) {
   return (
     <nav aria-label="Glavni meni">
       <ul className={list}>
-        {items.map((entry) => {
+        {entries.map((entry) => {
           const active = pathname === entry.href || pathname.startsWith(`${entry.href}/`);
           const color = active
             ? variant === "bottom"

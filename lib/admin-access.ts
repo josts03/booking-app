@@ -34,3 +34,6 @@ export const getAdminAccess = cache(async (): Promise<AdminAccess> => {
 
 /** What an admin server action answers when access is gone (e.g. signed out in another tab). */
 export const NO_ADMIN_ACCESS = "Seja je potekla. Prijavite se znova.";
+
+/** What a staff member's account sees when it tries an owner-only change (decision of 22. 10. 2026). */
+export const OWNER_ONLY = "To lahko ureja samo lastnik salona.";

@@ -1,5 +1,7 @@
 import { addDays } from "date-fns";
+import Link from "next/link";
 import { notFound } from "next/navigation";
+import { getAdminAccess } from "@/lib/admin-access";
 import { safeColor } from "@/lib/brand";
 import { getCurrentSalon } from "@/lib/current-salon";
 import {
@@ -9,9 +11,11 @@ import {
   getStaffServices,
   getTimeOff,
 } from "@/lib/data";
-import { formatDate } from "@/lib/format";
+import { localDay } from "@/lib/format";
 import type { StaffHours, Weekday } from "@/lib/types";
-import { card, pageTitle } from "../_components/ui";
+import { buttonSecondary, card, pageTitle } from "../_components/ui";
+import { absenceDates } from "./absence-dates";
+import { DeleteTimeOffButton, NewStaffForm, TimeOffForm } from "./staff-forms";
 
 // Monday first; the value is staff_hours.weekday (0 = Sunday).
 const WEEK: { weekday: Weekday; label: string }[] = [
@@ -35,16 +39,12 @@ function dayHours(hours: StaffHours[], staffId: string, weekday: Weekday): strin
   return windows.length ? windows.join(", ") : "Prost dan";
 }
 
-/** "25. 9. 2026" or, for several days, "25. 9. 2026–27. 9. 2026". ends_at is exclusive. */
-function absenceDates(startsAt: string, endsAt: string, timeZone: string): string {
-  const first = formatDate(startsAt, timeZone);
-  const last = formatDate(new Date(Date.parse(endsAt) - 1).toISOString(), timeZone);
-  return first === last ? first : `${first}–${last}`;
-}
 
 export default async function StaffPage() {
   const salon = await getCurrentSalon();
   if (!salon) notFound();
+  const access = await getAdminAccess();
+  const isOwner = access.ok && access.role === "owner";
 
   const now = new Date();
   const [staff, hours, links, services, timeOff] = await Promise.all([
@@ -61,6 +61,7 @@ export default async function StaffPage() {
         <h1 className={pageTitle}>Zaposleni</h1>
         <p className="mt-1 text-ink-muted">
           Tedenski urnik po dnevih. Barva pri imenu je barva zaposlenega v koledarju.
+          {!isOwner && " Urejati jih lahko samo lastnik salona."}
         </p>
       </div>
 
@@ -88,6 +89,11 @@ export default async function StaffPage() {
                       <span className="rounded-full bg-line px-2.5 py-0.5 text-xs font-semibold text-ink-muted">
                         Neaktiven
                       </span>
+                    )}
+                    {isOwner && (
+                      <Link href={`/admin/zaposleni/${member.id}`} className={`${buttonSecondary} ml-auto`}>
+                        Uredi
+                      </Link>
                     )}
                   </div>
                   <p className="mt-1 flex flex-wrap gap-x-4 text-sm">
@@ -152,6 +158,39 @@ export default async function StaffPage() {
           );
         })}
       </ul>
+
+      {isOwner && (
+        <div className="grid gap-4 xl:grid-cols-2">
+          <NewStaffForm />
+          <section className={`${card} space-y-4 p-4`} aria-labelledby="closed-title">
+            <div>
+              <h2 id="closed-title" className="font-semibold">
+                Salon zaprt
+              </h2>
+              <p className="text-sm text-ink-muted">Prazniki in dnevi, ko ne dela nihče. Stranke takrat ne vidijo prostih terminov.</p>
+            </div>
+            {timeOff.filter((t) => t.staff_id === null).length > 0 && (
+              <ul className="divide-y divide-line">
+                {timeOff
+                  .filter((t) => t.staff_id === null)
+                  .map((t) => {
+                    const label = absenceDates(t.starts_at, t.ends_at, salon.timezone);
+                    return (
+                      <li key={t.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+                        <span>
+                          <span className="font-medium">{label}</span>
+                          {t.reason && <span className="text-ink-muted"> · {t.reason}</span>}
+                        </span>
+                        <DeleteTimeOffButton id={t.id} label={label} />
+                      </li>
+                    );
+                  })}
+              </ul>
+            )}
+            <TimeOffForm staffId={null} today={localDay(now, salon.timezone)} timezone={salon.timezone} />
+          </section>
+        </div>
+      )}
     </div>
   );
 }
