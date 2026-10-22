@@ -12,7 +12,7 @@ import { formatPhone } from "@/lib/phone";
 import type { Booking } from "@/lib/types";
 import { calendarHref } from "../../_components/calendar-url";
 import { StatusBadge } from "../../_components/status-badge";
-import { backLink, card, pageTitle } from "../../_components/ui";
+import { backLink, buttonSecondary, card, pageTitle } from "../../_components/ui";
 import { AnonymizeForm, NoteForm } from "./customer-forms";
 
 export default async function CustomerPage({ params }: PageProps<"/admin/stranke/[id]">) {
@@ -148,10 +148,16 @@ export default async function CustomerPage({ params }: PageProps<"/admin/stranke
           <div>
             <h2 className="font-semibold">Osebni podatki</h2>
             <p className="mt-1 text-sm text-ink-muted">
-              Če stranka zahteva izbris, jo anonimizirajte. Prej odpovejte njene prihodnje termine.
+              Če stranka želi kopijo svojih podatkov, jih izvozite. Če zahteva izbris, jo anonimizirajte (prej
+              odpovejte njene prihodnje termine).
             </p>
           </div>
-          <AnonymizeForm customerId={customer.id} name={name} />
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+            <a href={`/admin/stranke/${customer.id}/izvoz`} download className={buttonSecondary}>
+              Izvozi podatke (CSV)
+            </a>
+            <AnonymizeForm customerId={customer.id} name={name} />
+          </div>
         </section>
       )}
     </div>

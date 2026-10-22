@@ -19,6 +19,15 @@ export const NEXT_STATUSES: Record<BookingStatus, BookingStatus[]> = {
   cancelled: [],
 };
 
+/** What the status is called (badge, calendar, CSV export). */
+export const STATUS_LABELS: Record<BookingStatus, string> = {
+  pending: "Čaka potrditev",
+  confirmed: "Potrjeno",
+  cancelled: "Odpovedano",
+  no_show: "Neprihod",
+  completed: "Opravljeno",
+};
+
 /** Statuses that describe what happened, so they need the appointment to have begun. */
 const AFTER_START: BookingStatus[] = ["completed", "no_show"];
 

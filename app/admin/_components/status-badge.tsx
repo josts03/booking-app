@@ -1,12 +1,5 @@
+import { STATUS_LABELS as labels } from "@/lib/booking-status";
 import type { BookingStatus } from "@/lib/types";
-
-const labels: Record<BookingStatus, string> = {
-  pending: "Čaka potrditev",
-  confirmed: "Potrjeno",
-  cancelled: "Odpovedano",
-  no_show: "Neprihod",
-  completed: "Opravljeno",
-};
 
 const styles: Record<BookingStatus, string> = {
   pending: "bg-warning/10 text-warning",

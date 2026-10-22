@@ -259,6 +259,13 @@ export interface CustomerSummary {
   next_visit_at: Timestamptz | null;
 }
 
+/** One customer's data for the GDPR export (lib/data.ts exportCustomer): every booking, with names. */
+export interface CustomerExport {
+  customer: Customer;
+  /** Newest first, all statuses. */
+  bookings: (Booking & { service_name: string; staff_name: string })[];
+}
+
 /** The editable columns of a service (price in cents, like in the database). */
 export interface ServiceInput {
   name: string;

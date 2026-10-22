@@ -50,6 +50,7 @@ import type {
   CancelBookingResult,
   CreateBookingResult,
   Customer,
+  CustomerExport,
   CustomerSummary,
   FreeSlot,
   FreeSlotsQuery,
@@ -587,6 +588,44 @@ export async function anonymizeCustomer(salonId: Uuid, customerId: Uuid, now: Da
   } catch {
     return { ok: false, error: CUSTOMER_MESSAGES.failed };
   }
+}
+
+/**
+ * Every customer for the CSV export on the customer list. Owner only (decision
+ * 1a): it is the salon's whole list of personal data. Anonymized customers are
+ * left out, nothing personal is left of them. Each export is logged.
+ */
+export async function exportCustomers(salonId: Uuid): Promise<CustomerSummary[]> {
+  const actor = await ownerOnly(salonId, "exportCustomers");
+  const rows = (await getCustomers(salonId)).filter((row) => row.customer.anonymized_at === null);
+  await audit(salonId, actor, "customers.export", salonId, { count: rows.length }, "salon");
+  return rows;
+}
+
+/**
+ * One customer with all their bookings, for the CSV on their card (a GDPR
+ * access request, specs/security.md). Owner only. Each export is logged.
+ */
+export async function exportCustomer(salonId: Uuid, customerId: Uuid): Promise<CustomerExport | null> {
+  const actor = await ownerOnly(salonId, "exportCustomer");
+  const customer = await getCustomer(salonId, customerId);
+  if (!customer) return null;
+  const [bookings, services, staff] = await Promise.all([
+    getCustomerBookings(salonId, customerId),
+    getServices(salonId, { includeInactive: true }),
+    getStaff(salonId, { includeInactive: true }),
+  ]);
+  const serviceName = new Map(services.map((s) => [s.id, s.name]));
+  const staffName = new Map(staff.map((s) => [s.id, s.name]));
+  await audit(salonId, actor, "customer.export", customerId, {}, "customer");
+  return {
+    customer,
+    bookings: bookings.map((b) => ({
+      ...b,
+      service_name: serviceName.get(b.service_id) ?? "",
+      staff_name: staffName.get(b.staff_id) ?? "",
+    })),
+  };
 }
 
 // ---------- admin writes: services ----------

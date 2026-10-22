@@ -1,6 +1,6 @@
 /**
  * Week 10 against the REAL Supabase project (npm run test:live): the customer's
- * internal note and GDPR anonymization. Runs in temporary salons of its own,
+ * internal note, the CSV exports and GDPR anonymization. Runs in temporary salons of its own,
  * deleted at the end with all their rows, and so are the users.
  */
 import { after, before, describe, test } from "node:test";
@@ -13,6 +13,8 @@ import {
   anonymizeCustomer,
   CUSTOMER_MESSAGES,
   CUSTOMER_NOTE_MAX,
+  exportCustomer,
+  exportCustomers,
   getCustomers,
   updateCustomerNote,
 } from "../../lib/data";
@@ -196,5 +198,39 @@ describe("anonymization", () => {
     assert.deepEqual(await asOwner(() => anonymizeCustomer(salon, foreign.id)), { ok: false, error: CUSTOMER_MESSAGES.notFound });
     const untouched = await adminDb().from("customers").select("anonymized_at").eq("id", foreign.id).single();
     assert.equal(untouched.data?.anonymized_at, null);
+  });
+});
+
+describe("CSV exports", () => {
+  test("owner only; the list leaves out anonymized customers; every export is logged", async () => {
+    await assert.rejects(() => asHelper(() => exportCustomers(salon)), /No owner access/);
+    await assert.rejects(() => runAsSignedInUser(stranger, () => exportCustomers(salon)), /No owner access/);
+
+    const ana = await customer();
+    const rows = await asOwner(() => exportCustomers(salon));
+    assert.ok(rows.some((r) => r.customer.id === ana.id));
+    assert.ok(rows.every((r) => r.customer.anonymized_at === null));
+    assert.ok(rows.every((r) => r.customer.salon_id === salon));
+
+    const audit = await adminDb().from("audit_log").select("payload, actor_user_id").eq("salon_id", salon).eq("action", "customers.export");
+    assert.deepEqual(audit.data?.at(-1), { payload: { count: rows.length }, actor_user_id: owner.id });
+  });
+
+  test("one customer: every booking with service and staff names; another salon's customer is not found", async () => {
+    await assert.rejects(() => asHelper(() => exportCustomer(salon, randomUUID())), /No owner access/);
+    const ana = await customer();
+    const done = await booking(ana.id, subDays(new Date(), 20), "completed");
+    const data = await asOwner(() => exportCustomer(salon, ana.id));
+    assert.ok(data);
+    assert.equal(data.customer.id, ana.id);
+    assert.deepEqual(
+      data.bookings.map((b) => [b.id, b.service_name, b.staff_name, b.price_cents]),
+      [[done, "Striženje", "Maja", 2500]],
+    );
+    const audit = await adminDb().from("audit_log").select("payload").eq("entity_id", ana.id).eq("action", "customer.export");
+    assert.deepEqual(audit.data, [{ payload: {} }]);
+
+    const foreign = await customer(otherSalon);
+    assert.equal(await asOwner(() => exportCustomer(salon, foreign.id)), null);
   });
 });

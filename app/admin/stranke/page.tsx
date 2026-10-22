@@ -1,24 +1,33 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getCurrentSalon } from "@/lib/current-salon";
+import { getAdminAccess } from "@/lib/admin-access";
 import { getCustomers } from "@/lib/data";
 import { formatDate } from "@/lib/format";
 import { formatPhone } from "@/lib/phone";
-import { buttonPrimary, card, inputClass, pageTitle } from "../_components/ui";
+import { buttonPrimary, buttonSecondary, card, inputClass, pageTitle } from "../_components/ui";
 
 export default async function CustomersPage({ searchParams }: PageProps<"/admin/stranke">) {
   const raw = await searchParams;
   const query = typeof raw.q === "string" ? raw.q.trim().slice(0, 60) : "";
 
-  const salon = await getCurrentSalon();
-  if (!salon) notFound();
+  const access = await getAdminAccess();
+  if (!access.ok) notFound(); // the admin layout handles signed-out and non-members
+  const { salon } = access;
   const tz = salon.timezone;
 
   const customers = await getCustomers(salon.id, { query });
 
   return (
     <div className="space-y-5">
-      <h1 className={pageTitle}>Stranke</h1>
+      <div className="flex items-center justify-between gap-3">
+        <h1 className={pageTitle}>Stranke</h1>
+        {/* Owner only (decision 1a). A plain link: the file is a download, not a page. */}
+        {access.role === "owner" && (
+          <a href="/admin/stranke/izvoz" download className={buttonSecondary}>
+            Izvozi CSV
+          </a>
+        )}
+      </div>
 
       <form action="/admin/stranke" role="search" className="flex gap-2">
         <input
