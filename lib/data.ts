@@ -488,6 +488,107 @@ export async function getCustomerBookings(salonId: Uuid, customerId: Uuid): Prom
   );
 }
 
+// ---------- admin writes: customers (week 10) ----------
+
+export const CUSTOMER_NOTE_MAX = 1000;
+
+export const CUSTOMER_MESSAGES = {
+  notFound: "Stranke ni mogoče najti. Osvežite stran.",
+  noteTooLong: `Opomba je predolga (največ ${CUSTOMER_NOTE_MAX} znakov).`,
+  failed: "Sprememb trenutno ni mogoče shraniti. Poskusite znova čez nekaj minut.",
+} as const;
+
+/** What an anonymized customer is called everywhere (calendar, lists, e-mails to the salon). */
+export const ANONYMIZED_NAME = { first_name: "Anonimizirana", last_name: "stranka" } as const;
+
+/**
+ * The salon's internal note about a customer. Never shown to the customer.
+ * Owner and staff. Not for an anonymized customer: nothing personal goes back
+ * in. The note itself is not written to audit_log (it is personal data).
+ */
+export async function updateCustomerNote(salonId: Uuid, customerId: Uuid, note: string | null): Promise<ManageResult<Customer>> {
+  const actor = await adminOnly(salonId, "updateCustomerNote");
+  const clean = note?.trim() || null;
+  if (!isUuid(customerId)) return { ok: false, error: CUSTOMER_MESSAGES.notFound };
+  if ((clean ?? "").length > CUSTOMER_NOTE_MAX) return { ok: false, error: CUSTOMER_MESSAGES.noteTooLong };
+  try {
+    const { data, error } = await adminDb()
+      .from("customers")
+      .update({ notes: clean })
+      .eq("id", customerId)
+      .eq("salon_id", salonId)
+      .is("anonymized_at", null)
+      .select("*")
+      .maybeSingle<Customer>();
+    if (error) fail("updateCustomerNote", error);
+    if (!data) return { ok: false, error: CUSTOMER_MESSAGES.notFound };
+    await audit(salonId, actor, "customer.note", customerId, {}, "customer");
+    return { ok: true, value: data, affected: [] };
+  } catch {
+    return { ok: false, error: CUSTOMER_MESSAGES.failed };
+  }
+}
+
+/**
+ * Erasing a customer is anonymizing them (specs/security.md): name, phone,
+ * e-mail, note and consent are overwritten and anonymized_at is set; their
+ * bookings stay for the salon's statistics, without the booking's e-mail (005)
+ * and both notes. Owner only (decision 1a of 22. 10. 2026). Not while the
+ * customer still has future bookings (decision 2a): the salon cancels them
+ * first, so nobody waits for a booking nobody can be told about.
+ *
+ * Bookings first, the customer last: if a step fails, the customer still shows
+ * as not anonymized and the owner simply tries again. Running it twice is fine.
+ */
+export async function anonymizeCustomer(salonId: Uuid, customerId: Uuid, now: Date = new Date()): Promise<ManageResult<null>> {
+  const actor = await ownerOnly(salonId, "anonymizeCustomer");
+  if (!isUuid(customerId)) return { ok: false, error: CUSTOMER_MESSAGES.notFound };
+  try {
+    const db = adminDb();
+    const customer = await must(
+      "anonymizeCustomer(customer)",
+      db.from("customers").select("id, anonymized_at").eq("id", customerId).eq("salon_id", salonId)
+        .maybeSingle<Pick<Customer, "id" | "anonymized_at">>(),
+    );
+    if (!customer) return { ok: false, error: CUSTOMER_MESSAGES.notFound };
+    if (customer.anonymized_at) return { ok: true, value: null, affected: [] };
+
+    const { count, error: countError } = await db
+      .from("bookings")
+      .select("id", { count: "exact", head: true })
+      .eq("salon_id", salonId)
+      .eq("customer_id", customerId)
+      .in("status", ["pending", "confirmed"])
+      .gte("ends_at", now.toISOString());
+    if (countError) fail("anonymizeCustomer(upcoming)", countError);
+    if (count) {
+      return {
+        ok: false,
+        error: `Število prihodnjih terminov te stranke: ${count}. Najprej jih odpovejte, nato stranko anonimizirajte.`,
+      };
+    }
+
+    const { error: bookingsError } = await db
+      .from("bookings")
+      .update({ contact_email: null, customer_note: null, internal_note: null })
+      .eq("salon_id", salonId)
+      .eq("customer_id", customerId);
+    if (bookingsError) fail("anonymizeCustomer(bookings)", bookingsError);
+
+    const { error } = await db
+      .from("customers")
+      .update({ ...ANONYMIZED_NAME, phone: null, email: null, notes: null, marketing_consent: false, anonymized_at: now.toISOString() })
+      .eq("id", customerId)
+      .eq("salon_id", salonId);
+    if (error) fail("anonymizeCustomer(customer)", error);
+
+    await audit(salonId, actor, "customer.anonymize", customerId, {}, "customer");
+    return { ok: true, value: null, affected: [] };
+  } catch {
+    return { ok: false, error: CUSTOMER_MESSAGES.failed };
+  }
+}
+
 // ---------- admin writes: services ----------
 
 /** Same limits as the database (services checks in 001 and 002). */

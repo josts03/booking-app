@@ -1,24 +1,27 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getCurrentSalon } from "@/lib/current-salon";
+import { getAdminAccess } from "@/lib/admin-access";
 import {
   getCustomer,
   getCustomerBookings,
   getServices,
   getStaff,
 } from "@/lib/data";
-import { formatPrice, formatTime, formatWeekdayDate, localDay } from "@/lib/format";
+import { formatDate, formatPrice, formatTime, formatWeekdayDate, localDay } from "@/lib/format";
 import { formatPhone } from "@/lib/phone";
 import type { Booking } from "@/lib/types";
 import { calendarHref } from "../../_components/calendar-url";
 import { StatusBadge } from "../../_components/status-badge";
 import { backLink, card, pageTitle } from "../../_components/ui";
+import { AnonymizeForm, NoteForm } from "./customer-forms";
 
 export default async function CustomerPage({ params }: PageProps<"/admin/stranke/[id]">) {
   const { id } = await params;
 
-  const salon = await getCurrentSalon();
-  if (!salon) notFound();
+  const access = await getAdminAccess();
+  if (!access.ok) notFound(); // the admin layout handles signed-out and non-members
+  const { salon } = access;
+  const isOwner = access.role === "owner";
   const tz = salon.timezone;
 
   const customer = await getCustomer(salon.id, id);
@@ -46,9 +49,8 @@ export default async function CustomerPage({ params }: PageProps<"/admin/stranke
     ["Skupaj", formatPrice(completed.reduce((sum, b) => sum + b.price_cents, 0))],
   ];
 
-  const name = customer.anonymized_at
-    ? "Anonimizirana stranka"
-    : `${customer.first_name} ${customer.last_name ?? ""}`.trim();
+  const anonymized = customer.anonymized_at !== null;
+  const name = anonymized ? "Anonimizirana stranka" : `${customer.first_name} ${customer.last_name ?? ""}`.trim();
 
   function row(booking: Booking) {
     return (
@@ -83,39 +85,38 @@ export default async function CustomerPage({ params }: PageProps<"/admin/stranke
           aria-hidden="true"
           className="flex size-14 shrink-0 items-center justify-center rounded-full bg-brand text-lg font-bold text-brand-foreground"
         >
-          {customer.first_name[0]}
-          {customer.last_name?.[0]}
+          {anonymized ? "–" : `${customer.first_name[0]}${customer.last_name?.[0] ?? ""}`}
         </span>
         <div className="min-w-0">
           <h1 className={`${pageTitle} truncate`}>{name}</h1>
           <p className="text-sm text-ink-muted">
-            {customer.marketing_consent
-              ? "Soglaša z obveščanjem o akcijah"
-              : "Brez soglasja za obveščanje o akcijah"}
+            {anonymized
+              ? `Osebni podatki so izbrisani (${formatDate(customer.anonymized_at!, tz)}).`
+              : customer.marketing_consent
+                ? "Soglaša z obveščanjem o akcijah"
+                : "Brez soglasja za obveščanje o akcijah"}
           </p>
         </div>
       </div>
 
-      <div className={`${card} divide-y divide-line`}>
-        {customer.phone && (
-          <a href={`tel:${customer.phone}`} className="flex min-h-12 items-center justify-between px-4 py-2">
-            <span className="text-sm text-ink-muted">Telefon</span>
-            <span className="font-medium text-brand-ink underline">{formatPhone(customer.phone)}</span>
-          </a>
-        )}
-        {customer.email && (
-          <a href={`mailto:${customer.email}`} className="flex min-h-12 items-center justify-between gap-4 px-4 py-2">
-            <span className="text-sm text-ink-muted">E-pošta</span>
-            <span className="break-all font-medium text-brand-ink underline">{customer.email}</span>
-          </a>
-        )}
-        {customer.notes && (
-          <div className="px-4 py-3">
-            <p className="text-sm text-ink-muted">Interna opomba</p>
-            <p className="mt-0.5">{customer.notes}</p>
-          </div>
-        )}
-      </div>
+      {(customer.phone || customer.email) && (
+        <div className={`${card} divide-y divide-line`}>
+          {customer.phone && (
+            <a href={`tel:${customer.phone}`} className="flex min-h-12 items-center justify-between px-4 py-2">
+              <span className="text-sm text-ink-muted">Telefon</span>
+              <span className="font-medium text-brand-ink underline">{formatPhone(customer.phone)}</span>
+            </a>
+          )}
+          {customer.email && (
+            <a href={`mailto:${customer.email}`} className="flex min-h-12 items-center justify-between gap-4 px-4 py-2">
+              <span className="text-sm text-ink-muted">E-pošta</span>
+              <span className="break-all font-medium text-brand-ink underline">{customer.email}</span>
+            </a>
+          )}
+        </div>
+      )}
+
+      {!anonymized && <NoteForm customerId={customer.id} note={customer.notes ?? ""} />}
 
       <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {stats.map(([label, value]) => (
@@ -141,6 +142,18 @@ export default async function CustomerPage({ params }: PageProps<"/admin/stranke
           <ul className={`${card} divide-y divide-line overflow-hidden`}>{history.map(row)}</ul>
         )}
       </section>
+
+      {isOwner && !anonymized && (
+        <section className={`${card} space-y-3 p-4`}>
+          <div>
+            <h2 className="font-semibold">Osebni podatki</h2>
+            <p className="mt-1 text-sm text-ink-muted">
+              Če stranka zahteva izbris, jo anonimizirajte. Prej odpovejte njene prihodnje termine.
+            </p>
+          </div>
+          <AnonymizeForm customerId={customer.id} name={name} />
+        </section>
+      )}
     </div>
   );
 }

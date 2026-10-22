@@ -67,8 +67,7 @@ export default async function CustomersPage({ searchParams }: PageProps<"/admin/
                     aria-hidden="true"
                     className="flex size-11 shrink-0 items-center justify-center rounded-full bg-brand-soft font-semibold text-brand-ink"
                   >
-                    {customer.first_name[0]}
-                    {customer.last_name?.[0]}
+                    {customer.anonymized_at ? "–" : `${customer.first_name[0]}${customer.last_name?.[0] ?? ""}`}
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-semibold">{name}</span>
