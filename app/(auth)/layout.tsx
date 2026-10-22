@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { brandStyle } from "@/lib/brand";
 import { getCurrentSalon } from "@/lib/current-salon";
+import { subdomainOf } from "@/lib/tenant";
 import { SalonLogo } from "../(salon)/_components/salon-logo";
 
 export const metadata: Metadata = {
@@ -13,10 +15,24 @@ export const metadata: Metadata = {
  * Sign-in and password pages of the salon's admin, on the salon's own
  * subdomain (the session cookie belongs to that host). Not inside (salon): a
  * suspended salon's owner must still be able to sign in.
+ *
+ * On the main domain without a salon (production has no "test" salon there)
+ * the pages show the platform's name: the platform owner signs in there for
+ * /super.
  */
 export default async function AuthLayout({ children }: { children: React.ReactNode }) {
   const salon = await getCurrentSalon();
-  if (!salon) notFound();
+  if (!salon) {
+    if (subdomainOf((await headers()).get("host") ?? "")) notFound();
+    return (
+      <div style={brandStyle(null)} className="flex min-h-dvh flex-col bg-canvas px-gutter py-10">
+        <main className="mx-auto w-full max-w-sm">
+          <p className="mb-8 text-center text-lg font-bold tracking-tight">Termin</p>
+          <div className="rounded-card border border-line bg-surface p-6 shadow-card">{children}</div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div style={brandStyle(salon.brand_color)} className="flex min-h-dvh flex-col bg-canvas px-gutter py-10">

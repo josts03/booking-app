@@ -6,6 +6,7 @@ import { requestPasswordReset, setNewPassword, signInWithPassword, signOut } fro
 import { getCurrentSalon } from "@/lib/current-salon";
 import { getSalonRole } from "@/lib/data";
 import { safeNextPath } from "@/lib/safe-next";
+import { isSuperAdminEmail, isSuperPath } from "@/lib/super-admin";
 import { salonOrigin } from "@/lib/tenant";
 
 export type SignInField = "email" | "password";
@@ -35,6 +36,9 @@ function text(formData: FormData, key: string): string {
  * account. Someone with a valid account who is not a member of THIS salon is
  * signed out again at once.
  *
+ * With next=/super (the platform owner's dashboard, on the main domain) no
+ * salon is needed: only the SUPER_ADMIN_EMAIL account stays signed in.
+ *
  * TODO(week 11): limit attempts per e-mail and IP (rate_limits, specs/security.md).
  */
 export async function signInAction(_previous: SignInState, formData: FormData): Promise<SignInState> {
@@ -48,12 +52,11 @@ export async function signInAction(_previous: SignInState, formData: FormData): 
     };
   }
 
-  let salonId: string;
-  let salonName: string;
+  const next = safeNextPath(formData.get("next"));
+  const toSuper = isSuperPath(next);
   try {
-    const salon = await getCurrentSalon();
-    if (!salon) return { message: FAILED, email };
-    ({ id: salonId, name: salonName } = salon);
+    const salon = toSuper ? null : await getCurrentSalon();
+    if (!toSuper && !salon) return { message: FAILED, email };
 
     const result = await signInWithPassword(parsed.data.email, parsed.data.password);
     if (!result.ok) {
@@ -64,16 +67,21 @@ export async function signInAction(_previous: SignInState, formData: FormData): 
       return { message: FAILED, email };
     }
 
-    if (!(await getSalonRole(salonId, result.user.id))) {
+    if (toSuper) {
+      if (!isSuperAdminEmail(result.user.email)) {
+        await signOut();
+        return { message: "Ta račun nima dostopa do nadzorne plošče.", email };
+      }
+    } else if (!(await getSalonRole(salon!.id, result.user.id))) {
       await signOut();
-      return { message: `Ta račun nima dostopa do salona ${salonName}.`, email };
+      return { message: `Ta račun nima dostopa do salona ${salon!.name}.`, email };
     }
   } catch {
     return { message: FAILED, email };
   }
 
   // redirect() throws, so it must stay outside the try/catch.
-  redirect(safeNextPath(formData.get("next")));
+  redirect(next);
 }
 
 /** Signs out of this salon's admin. */

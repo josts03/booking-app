@@ -2,13 +2,15 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { safeNextPath } from "./safe-next";
 
-describe("safeNextPath: after signing in, only into the admin", () => {
+describe("safeNextPath: after signing in, only into the admin or /super", () => {
   const kept = [
     "/admin",
     "/admin/koledar",
     "/admin/koledar?view=week&day=2026-10-09",
     "/admin/stranke/7f9c2b1e-4d3a-4f6b-9a8e-1c2d3e4f5a6b",
     "/admin/stranke?q=ana.novak",
+    "/super",
+    "/super/saloni",
   ];
   for (const path of kept) {
     test(`keeps ${path}`, () => assert.equal(safeNextPath(path), path));
@@ -20,6 +22,9 @@ describe("safeNextPath: after signing in, only into the admin", () => {
     "/\\evil.example",
     "/admin@evil.example",
     "/adminx",
+    "/superx",
+    "/super.rsc",
+    "//evil.example/super",
     "/admin//evil.example",
     "/admin/../rezervacija",
     "/admin.rsc",
