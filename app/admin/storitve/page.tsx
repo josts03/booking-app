@@ -69,7 +69,7 @@ export default async function ServicesPage() {
           <span>Čiščenje (min)</span>
           <span>Cena (€)</span>
           <span>Stanje</span>
-          <span className="w-24" />
+          <span />
         </div>
 
         {services.map((service) => (
@@ -83,7 +83,7 @@ export default async function ServicesPage() {
         </summary>
         <div className="p-3 pt-0">
           {/* key: a new empty form after every added service */}
-          <ServiceForm key={services.length} categories={categories} staff={staff} performers={[]} />
+          <ServiceForm key={services.length} categories={categories} staff={staff} performers={[]} labelsVisible />
         </div>
       </details>
     </div>

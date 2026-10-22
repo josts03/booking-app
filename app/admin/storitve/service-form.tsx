@@ -15,13 +15,16 @@ function priceText(cents: number): string {
 /**
  * One row of the services table, and at the same time a form: edit the fields
  * and press "Shrani". Phone: stacked card with visible labels. Large screen:
- * one table row (the labels stay for screen readers, the page shows a header).
+ * one table row (the labels stay for screen readers, the page shows a header),
+ * with "Kdo izvaja" on a line of its own below. `labelsVisible`: the new
+ * service's form, which is not under the header, shows its labels everywhere.
  */
 export function ServiceForm({
   service,
   categories,
   staff,
   performers,
+  labelsVisible = false,
 }: {
   service?: Service;
   categories: string[];
@@ -29,6 +32,7 @@ export function ServiceForm({
   staff: { id: string; name: string }[];
   /** Ids of the staff who perform this service now. */
   performers: string[];
+  labelsVisible?: boolean;
 }) {
   const [state, action, pending] = useActionState<ServiceFormState, FormData>(saveService, null);
   const values = state?.values;
@@ -53,7 +57,7 @@ export function ServiceForm({
     return (
       <div>
         <label className="block">
-          <span className="mb-1 block text-xs font-medium text-ink-muted lg:sr-only">{label}</span>
+          <span className={`mb-1 block text-xs font-medium text-ink-muted ${labelsVisible ? "" : "lg:sr-only"}`}>{label}</span>
           <input
             name={name}
             defaultValue={value(name)}
@@ -78,7 +82,7 @@ export function ServiceForm({
     <form
       action={action}
       noValidate
-      className={`grid grid-cols-2 gap-3 rounded-card border border-line bg-surface p-4 lg:items-start lg:p-3 ${SERVICE_GRID_LG} ${
+      className={`grid grid-cols-2 gap-3 rounded-card border border-line bg-surface p-4 lg:p-3 ${labelsVisible ? "lg:items-end" : "lg:items-start"} ${SERVICE_GRID_LG} ${
         service && !active ? "opacity-70" : ""
       }`}
     >
@@ -131,7 +135,8 @@ export function ServiceForm({
         </div>
       </fieldset>
 
-      <button type="submit" disabled={pending} className={`${buttonPrimary} col-span-2 lg:col-span-1`}>
+      {/* Last in the form (after "Kdo izvaja"), but on large screens at the end of the first row, under no header. */}
+      <button type="submit" disabled={pending} className={`${buttonPrimary} col-span-2 lg:col-span-1 lg:col-start-7 lg:row-start-1`}>
         {pending ? "Shranjujem …" : service ? "Shrani" : "Dodaj"}
       </button>
 

@@ -3,7 +3,7 @@ import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { brandStyle } from "@/lib/brand";
 import { getCurrentSalon } from "@/lib/current-salon";
-import { subdomainOf } from "@/lib/tenant";
+import { requestHost, subdomainOf } from "@/lib/tenant";
 import { SalonLogo } from "../(salon)/_components/salon-logo";
 
 export const metadata: Metadata = {
@@ -23,7 +23,7 @@ export const metadata: Metadata = {
 export default async function AuthLayout({ children }: { children: React.ReactNode }) {
   const salon = await getCurrentSalon();
   if (!salon) {
-    if (subdomainOf((await headers()).get("host") ?? "")) notFound();
+    if (subdomainOf(requestHost(await headers()) ?? "")) notFound();
     return (
       <div style={brandStyle(null)} className="flex min-h-dvh flex-col bg-canvas px-gutter py-10">
         <main className="mx-auto w-full max-w-sm">

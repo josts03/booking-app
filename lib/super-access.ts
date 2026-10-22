@@ -13,7 +13,7 @@ import { cache } from "react";
 import { headers } from "next/headers";
 import { getSignedInUser, type SignedInUser } from "./auth";
 import { isSuperAdminEmail } from "./super-admin";
-import { subdomainOf } from "./tenant";
+import { requestHost, subdomainOf } from "./tenant";
 
 export type SuperAccess =
   | { ok: true; user: SignedInUser }
@@ -22,7 +22,7 @@ export type SuperAccess =
 
 /** Cached per request, so the layout, the page and an action share one check. */
 export const getSuperAccess = cache(async (): Promise<SuperAccess> => {
-  if (subdomainOf((await headers()).get("host") ?? "")) return { ok: false, reason: "wrong-host" };
+  if (subdomainOf(requestHost(await headers()) ?? "")) return { ok: false, reason: "wrong-host" };
   const user = await getSignedInUser();
   if (!user) return { ok: false, reason: "signed-out" };
   if (!isSuperAdminEmail(user.email)) return { ok: false, reason: "not-super" };

@@ -15,7 +15,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { safeNextPath, ADMIN_HOME } from "./lib/safe-next";
 import { refreshSession, type SessionRefresh } from "./lib/supabase/session-client";
-import { salonSlugFromHost, subdomainOf } from "./lib/tenant";
+import { requestHost, salonSlugFromHost, subdomainOf } from "./lib/tenant";
 
 /** "/admin", "/super", their subpaths, and Next's transport URLs such as "/admin.rsc". */
 const SIGNED_IN_PATH = /^\/(?:admin|super)(?:[/.]|$)/;
@@ -47,12 +47,15 @@ export async function proxy(request: NextRequest) {
     }
   }
 
-  const host = request.headers.get("host");
+  // Not simply Host: Next replaces it in its own internal requests (lib/tenant.ts requestHost).
+  const host = requestHost(request.headers);
 
   // Built after refreshSession(), so the page sees the refreshed cookies.
-  // set() overwrites any x-salon-slug the client sent.
+  // set() overwrites any x-salon-slug the client sent. x-forwarded-host is set
+  // to the host used here, so the page, also after a rewrite, sees the same one.
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-salon-slug", salonSlugFromHost(host));
+  if (host) requestHeaders.set("x-forwarded-host", host);
 
   // On a salon's own subdomain the root is the booking page. On the main
   // domain "/" stays the marketing site. /rezervacija works on both.
