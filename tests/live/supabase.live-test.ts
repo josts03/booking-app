@@ -1,5 +1,5 @@
 /**
- * Tests against the REAL Supabase project in .env.local (not part of `npm test`).
+ * Tests against a real Supabase project, the separate test one in .env.test (not part of `npm test`).
  *
  *   npm run test:live
  *
@@ -11,6 +11,7 @@
  */
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { randomBytes, randomUUID } from "node:crypto";
 import { addDays, format, getDay, parseISO } from "date-fns";
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import {
@@ -25,6 +26,7 @@ import {
   getStaff,
   updateService,
 } from "../../lib/data";
+import { runAsSignedInUser } from "../../lib/auth";
 import { FIXTURE_SALON_ID, FIXTURE_TIMEZONE, buildFixtures } from "../../lib/fixtures";
 import type { OutgoingEmail, SendResult } from "../../lib/email";
 import { sendBookingConfirmation, sendCancellationNotice } from "../../lib/notifications";
@@ -80,7 +82,7 @@ async function remember(result: Awaited<ReturnType<typeof createBooking>>) {
 }
 
 before(async () => {
-  assert.ok(process.env.SUPABASE_SECRET_KEY, "Run with npm run test:live (needs .env.local)");
+  assert.ok(process.env.SUPABASE_SECRET_KEY, "Run with npm run test:live (needs .env.test)");
   const salon = await getSalon("test");
   assert.ok(salon, 'The seed salon "test" is missing: run npm run seed and load supabase/seed.sql');
 });
@@ -173,9 +175,22 @@ describe("lib/data.ts against the live database", () => {
     );
   });
 
-  test("admin getStaff (includeInactive) has the contact data", async () => {
-    const staff = await getStaff(SALON, { includeInactive: true });
-    assert.ok(staff.every((s) => s.email !== null));
+  test("admin getStaff (includeInactive): members of the salon only, with the contact data", async () => {
+    await assert.rejects(() => getStaff(SALON, { includeInactive: true }), /No admin access/);
+    await assert.rejects(() => getServices(SALON, { includeInactive: true }), /No admin access/);
+
+    const db = adminDb();
+    const email = `live-test+member-${randomUUID().slice(0, 8)}@example.com`;
+    const created = await db.auth.admin.createUser({ email, password: randomBytes(24).toString("base64url"), email_confirm: true });
+    assert.equal(created.error, null);
+    const userId = created.data.user!.id;
+    try {
+      assert.equal((await db.from("salon_users").insert({ salon_id: SALON, user_id: userId, role: "staff" })).error, null);
+      const staff = await runAsSignedInUser({ id: userId, email }, () => getStaff(SALON, { includeInactive: true }));
+      assert.ok(staff.length > 0 && staff.every((s) => s.email !== null));
+    } finally {
+      await db.auth.admin.deleteUser(userId); // cascades to salon_users
+    }
   });
 
   test("getFreeSlots: working days only, inside 9-17, never on a booking", async () => {

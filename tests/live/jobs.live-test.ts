@@ -1,5 +1,5 @@
 /**
- * Week 11 against the REAL Supabase project (npm run test:live): the hourly job
+ * Week 11 against a real Supabase project, the separate test one in .env.test (npm run test:live): the hourly job
  * (reminders, three-year retention, rate-limit cleanup), the rate-limit
  * counters, and the job's secret. Temporary salons of its own, deleted at the
  * end. No e-mail is sent: reminders go through a fake sender, and the job route
@@ -192,11 +192,11 @@ describe("rate-limit counters", () => {
 });
 
 describe("the job's secret", () => {
-  test("without CRON_SECRET the job does not run; a wrong or missing header is refused", async () => {
+  test("without CRON_SECRET the job does not run; a wrong or missing header is refused, always with the same 401", async () => {
     const saved = env.CRON_SECRET;
     try {
       delete env.CRON_SECRET;
-      assert.equal((await cronJob(new Request("http://localhost/api/cron/reminders"))).status, 503);
+      assert.equal((await cronJob(new Request("http://localhost/api/cron/reminders"))).status, 401);
       env.CRON_SECRET = `secret-${run}`;
       assert.equal((await cronJob(new Request("http://localhost/api/cron/reminders"))).status, 401);
       const wrong = new Request("http://localhost/api/cron/reminders", { headers: { authorization: `Bearer secret-${run}x` } });

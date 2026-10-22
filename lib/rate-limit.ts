@@ -41,6 +41,13 @@ export const RATE_LIMITS = {
     windowMs: 15 * MINUTE,
     message: "Preveč poskusov prijave. Poskusite znova čez 15 minut.",
   },
+  /** "Forgotten password" requests from one IP address: each one can send an e-mail. */
+  resetPerIp: {
+    prefix: "reset-ip",
+    limit: 5,
+    windowMs: HOUR,
+    message: "Preveč zahtev za novo geslo. Poskusite znova čez eno uro.",
+  },
   /** Attempts to cancel by link from one IP address. */
   cancelPerIp: {
     prefix: "cancel-ip",

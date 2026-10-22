@@ -12,7 +12,8 @@
  * Which client a shared function uses:
  *   getSalon                      admin  (a suspended salon must still be found
  *                                         to show "booking unavailable")
- *   getServices / getStaff        public, or admin with includeInactive
+ *   getServices / getStaff        public, or with includeInactive admin only
+ *                                 (members of the salon: staff contact data)
  *   getFreeSlots                  public for hours and absences, admin only for
  *                                 busy times (start, end, buffer; no customer data)
  *   everything else               admin
@@ -194,11 +195,12 @@ export async function getSalon(slug: string): Promise<Salon | null> {
   return must("getSalon", adminDb().from("salons").select("*").eq("slug", slug).maybeSingle<Salon>());
 }
 
-/** Active services only, unless `includeInactive` (admin screens). */
+/** Active services only, unless `includeInactive` (admin screens: members of the salon only). */
 export async function getServices(
   salonId: Uuid,
   options: { includeInactive?: boolean } = {},
 ): Promise<Service[]> {
+  if (options.includeInactive) await adminOnly(salonId, "getServices(includeInactive)");
   if (!isUuid(salonId)) return [];
   if (options.includeInactive) {
     return selectAll("getServices", (from, to) =>
@@ -226,14 +228,16 @@ export async function getServices(
 }
 
 /**
- * Active staff only, unless `includeInactive` (admin screens).
- * With `serviceId`: only staff who perform that service (staff_services).
- * Without `includeInactive` (public pages) email, phone and user_id are null.
+ * Active staff only, unless `includeInactive` (admin screens: members of the
+ * salon only, as it includes email, phone and user_id). With `serviceId`: only
+ * staff who perform that service (staff_services). Without `includeInactive`
+ * (public pages) email, phone and user_id are null.
  */
 export async function getStaff(
   salonId: Uuid,
   options: { includeInactive?: boolean; serviceId?: Uuid } = {},
 ): Promise<Staff[]> {
+  if (options.includeInactive) await adminOnly(salonId, "getStaff(includeInactive)");
   if (!isUuid(salonId)) return [];
   if (options.serviceId !== undefined && !isUuid(options.serviceId)) return [];
   const db = options.includeInactive ? adminDb() : publicDb();
@@ -295,12 +299,44 @@ export async function getBookings(salonId: Uuid, from: Date, to: Date): Promise<
  * Finds a booking by its cancel_token (compared in full, never by id).
  * The caller must still check that booking.salon_id is the current salon.
  */
-export async function getBookingByCancelToken(token: string): Promise<Booking | null> {
-  if (!isUuid(token)) return null;
-  return must(
+/** What the customer's own pages (confirmation, cancel link) may show about their booking. */
+export interface CustomerBookingView {
+  booking: Pick<Booking, "id" | "salon_id" | "service_id" | "staff_id" | "status" | "starts_at" | "ends_at" | "price_cents" | "cancel_token">;
+  /** Null if the service is gone. Inactive ones are shown too: it is this customer's booking. */
+  service: Pick<Service, "name" | "duration_min"> | null;
+  staffName: string | null;
+}
+
+/**
+ * A booking by its cancel token, compared in full (specs/security.md), only in
+ * `salonId` (the salon on this host), with just the columns and names the page
+ * shows: no customer or staff contact data leaves the database for it.
+ */
+export async function getBookingByCancelToken(salonId: Uuid, token: string): Promise<CustomerBookingView | null> {
+  if (!isUuid(salonId) || !isUuid(token)) return null;
+  const db = adminDb();
+  const booking = await must(
     "getBookingByCancelToken",
-    adminDb().from("bookings").select("*").eq("cancel_token", token).maybeSingle<Booking>(),
+    db
+      .from("bookings")
+      .select("id, salon_id, service_id, staff_id, status, starts_at, ends_at, price_cents, cancel_token")
+      .eq("salon_id", salonId)
+      .eq("cancel_token", token)
+      .maybeSingle<CustomerBookingView["booking"]>(),
   );
+  if (!booking) return null;
+  const [service, member] = await Promise.all([
+    must(
+      "getBookingByCancelToken(service)",
+      db.from("services").select("name, duration_min").eq("id", booking.service_id).eq("salon_id", salonId)
+        .maybeSingle<Pick<Service, "name" | "duration_min">>(),
+    ),
+    must(
+      "getBookingByCancelToken(staff)",
+      db.from("staff").select("name").eq("id", booking.staff_id).eq("salon_id", salonId).maybeSingle<{ name: string }>(),
+    ),
+  ]);
+  return { booking, service, staffName: member?.name ?? null };
 }
 
 // ---------- admin reads ----------

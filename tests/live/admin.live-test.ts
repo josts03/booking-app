@@ -1,5 +1,5 @@
 /**
- * Week 8 against the REAL Supabase project (npm run test:live): the salon's
+ * Week 8 against a real Supabase project, the separate test one in .env.test (npm run test:live): the salon's
  * own changes to bookings. A temporary user is a member of the test salon
  * (runAsSignedInUser stands in for the session cookie; membership is checked
  * for real). Everything created is removed at the end: bookings, test
@@ -88,7 +88,7 @@ async function tempUser(): Promise<SignedInUser> {
 }
 
 before(async () => {
-  assert.ok(process.env.SUPABASE_SECRET_KEY, "Run with npm run test:live (needs .env.local)");
+  assert.ok(process.env.SUPABASE_SECRET_KEY, "Run with npm run test:live (needs .env.test)");
   assert.equal(process.env.NODE_ENV, "test", "npm run test:live sets NODE_ENV=test");
   const db = adminDb();
   member = await tempUser();

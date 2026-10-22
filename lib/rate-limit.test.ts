@@ -3,13 +3,14 @@ import assert from "node:assert/strict";
 import { clientIp, RATE_LIMITS, rateLimitBucket } from "./rate-limit";
 
 describe("rate-limit rules (specs/security.md)", () => {
-  test("5 bookings per IP an hour, 3 per phone a day, 10 sign-ins per IP in 15 minutes, 20 cancels per IP an hour", () => {
+  test("5 bookings per IP an hour, 3 per phone a day, 10 sign-ins per IP in 15 minutes, 5 password resets and 20 cancels per IP an hour", () => {
     assert.deepEqual(
       Object.values(RATE_LIMITS).map((r) => [r.prefix, r.limit, r.windowMs / 60_000]),
       [
         ["booking-ip", 5, 60],
         ["booking-phone", 3, 24 * 60],
         ["signin-ip", 10, 15],
+        ["reset-ip", 5, 60],
         ["cancel-ip", 20, 60],
       ],
     );

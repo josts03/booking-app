@@ -38,7 +38,7 @@ Odpri http://localhost:3000. Brez izpolnjenega `.env.local` strani s podatki ne 
 | `npm run start` | zažene gradnjo (najprej `npm run build`) |
 | `npm run lint` | ESLint |
 | `npm test` | testi brez interneta: motor terminov, telefon, podatki in **baza** (migracije, RLS, pravila v Postgresu v pomnilniku) |
-| `npm run test:live` | testi proti **pravi** bazi iz `.env.local`: API res zavrača prepovedano, rezervacije delujejo, dve hkratni rezervaciji istega termina -> ena uspe. Kar ustvarijo, na koncu pobrišejo |
+| `npm run test:live` | testi proti ločenemu **testnemu** Supabase projektu iz `.env.test` (glej "Živi testi"): API res zavrača prepovedano, rezervacije delujejo, dve hkratni rezervaciji istega termina -> ena uspe. Kar ustvarijo, na koncu pobrišejo |
 | `npm run seed` | ustvari `supabase/seed.sql` s testnim salonom |
 | `npm run salon-user -- test ime@primer.si` | da obstoječemu uporabniku dostop do admina salona `test` (vloga `owner`; za zaposlenega dodaj `staff`) |
 
@@ -111,6 +111,26 @@ Migracije so v `supabase/migrations/` in se poženejo po vrsti:
    uporabnik `resend`, geslo = ločen Resend ključ). Vgrajena pošta Supabase pošilja
    samo članom ekipe projekta in le nekaj sporočil na uro.
 
+**Živi testi** (`npm run test:live`, `tests/live/`) tečejo proti pravemu Supabase
+projektu, a **samo proti ločenemu testnemu projektu**, nikoli proti bazi s pravimi
+saloni: ustvarjajo in brišejo salone ter uporabnike in poženejo opravila za celo
+platformo (opomniki, anonimizacija po treh letih). Varovalo `tests/live/test-database.mjs`
+jih ustavi, če `.env.test` ni ali kaže na isti projekt kot `.env.local`.
+
+1. Supabase > New project (npr. `termin-test`, regija Frankfurt). Brezplačni paket
+   dovoli dva projekta.
+2. SQL Editor: prilepi in poženi `specs/schema.sql` (vse migracije v enem kosu),
+   nato `npm run seed` in vsebino `supabase/seed.sql`.
+3. Authentication > Sign In / Providers: izklopi "Allow new users to sign up".
+4. Datoteka `.env.test` (ni v gitu) s ključi TESTNEGA projekta:
+   ```
+   NEXT_PUBLIC_SUPABASE_URL=https://<testni-projekt>.supabase.co
+   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
+   SUPABASE_SECRET_KEY=sb_secret_...
+   LIVE_TEST_DATABASE=yes
+   ```
+   E-pošte testi ne pošiljajo (ponarejen pošiljatelj), zato Resend ključ ni potreben.
+
 **Testi baze** (`tests/db.test.ts`) poženejo migracije in seed v pravem Postgresu
 v pomnilniku in preverijo varnostni seznam iz `specs/security.md`: anonimni
 obiskovalec ne bere strank in rezervacij, admin vidi samo svoj salon, termini se
@@ -150,7 +170,7 @@ scripts/
   add-salon-user.ts npm run salon-user
 tests/
   db.test.ts      testi baze (Postgres v pomnilniku)
-  live/           testi proti pravi bazi (npm run test:live)
+  live/           testi proti testnemu Supabase projektu (npm run test:live, .env.test)
 ```
 
 Barve, tipografija in razmiki so na enem mestu: `app/globals.css`. Vsak salon

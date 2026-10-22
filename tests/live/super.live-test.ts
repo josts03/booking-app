@@ -1,5 +1,5 @@
 /**
- * Week 10 against the REAL Supabase project (npm run test:live): the platform
+ * Week 10 against a real Supabase project, the separate test one in .env.test (npm run test:live): the platform
  * owner's /super data. SUPER_ADMIN_EMAIL is pointed at a temporary account for
  * the run. Every salon and user made here is deleted at the end. No e-mail is
  * sent: createSalonWithOwner only returns the token, the action sends.

@@ -1,5 +1,5 @@
 /**
- * Week 10 against the REAL Supabase project (npm run test:live): the customer's
+ * Week 10 against a real Supabase project, the separate test one in .env.test (npm run test:live): the customer's
  * internal note, the CSV exports and GDPR anonymization. Runs in temporary salons of its own,
  * deleted at the end with all their rows, and so are the users.
  */

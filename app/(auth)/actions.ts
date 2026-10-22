@@ -115,12 +115,22 @@ const EmailSchema = SignInSchema.shape.email;
 /**
  * Sends a reset link for this salon's sign-in. The answer is always the same
  * whether or not the account exists, so the form cannot be used to find out
- * who has one. Supabase itself limits how often a link can be requested.
+ * who has one. At most 5 requests per IP address an hour: each one can send an
+ * e-mail, and the e-mail quota is shared with the customers' confirmations.
+ * Supabase itself also limits how often a link can be requested.
  */
 export async function requestResetAction(_previous: ResetRequestState, formData: FormData): Promise<ResetRequestState> {
   const email = text(formData, "email").trim();
   const parsed = EmailSchema.safeParse(email);
   if (!parsed.success) return { errors: { email: parsed.error.issues[0]?.message }, email };
+
+  const ip = clientIp(await headers());
+  if (ip) {
+    const now = new Date();
+    const bucket = rateLimitBucket(RATE_LIMITS.resetPerIp, ip);
+    if (await rateLimitReached(bucket, RATE_LIMITS.resetPerIp, now)) return { message: RATE_LIMITS.resetPerIp.message, email };
+    await noteRateLimitHit(bucket, now);
+  }
 
   try {
     const salon = await getCurrentSalon();

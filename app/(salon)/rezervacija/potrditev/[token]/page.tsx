@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { canCancel } from "@/lib/cancel";
 import { getCurrentSalon, isBookable } from "@/lib/current-salon";
-import { getBookingByCancelToken, getServices, getStaff } from "@/lib/data";
+import { getBookingByCancelToken } from "@/lib/data";
 import {
   formatDuration,
   formatPrice,
@@ -15,6 +15,8 @@ import { buttonSecondary } from "../../../_components/ui";
 // The URL contains the cancel token: keep it out of search engines.
 export const metadata: Metadata = {
   title: "Potrditev termina",
+  // The URL holds the cancel token: never send it on to another site.
+  referrer: "no-referrer",
   robots: { index: false, follow: false },
 };
 
@@ -27,16 +29,10 @@ export default async function ConfirmationPage({
   if (!salon) notFound();
   if (!isBookable(salon)) return null; // the layout shows the "unavailable" page
 
-  // Looked up by the full token, and it must belong to this salon.
-  const booking = await getBookingByCancelToken(token);
-  if (!booking || booking.salon_id !== salon.id) notFound();
-
-  const [services, staff] = await Promise.all([
-    getServices(salon.id, { includeInactive: true }),
-    getStaff(salon.id, { includeInactive: true }),
-  ]);
-  const service = services.find((s) => s.id === booking.service_id);
-  const member = staff.find((s) => s.id === booking.staff_id);
+  // Looked up by the full token, only in this salon.
+  const view = await getBookingByCancelToken(salon.id, token);
+  if (!view) notFound();
+  const { booking, service, staffName } = view;
   const tz = salon.timezone;
 
   const cancelled = booking.status === "cancelled";
@@ -49,7 +45,7 @@ export default async function ConfirmationPage({
 
   const rows: [string, string][] = [
     ["Storitev", service ? `${service.name} · ${formatDuration(service.duration_min)}` : "—"],
-    ["Zaposleni", member?.name ?? "—"],
+    ["Zaposleni", staffName ?? "—"],
     [
       "Termin",
       `${formatWeekdayDate(booking.starts_at, tz)} ob ${formatTime(booking.starts_at, tz)}`,

@@ -1,5 +1,5 @@
 /**
- * Sign-in and salon membership against the REAL Supabase project (npm run test:live).
+ * Sign-in and salon membership against a real Supabase project, the separate test one in .env.test (npm run test:live).
  *
  * A temporary user is created with the Auth admin API (random password, never
  * printed) and deleted at the end; its salon_users rows go with it (cascade).
@@ -33,7 +33,7 @@ async function signedIn(): Promise<SupabaseClient> {
 }
 
 before(async () => {
-  assert.ok(process.env.SUPABASE_SECRET_KEY, "Run with npm run test:live (needs .env.local)");
+  assert.ok(process.env.SUPABASE_SECRET_KEY, "Run with npm run test:live (needs .env.test)");
   const db = adminDb();
   const user = await db.auth.admin.createUser({
     email: `live-test+${run}@example.com`,

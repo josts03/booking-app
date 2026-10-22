@@ -12,7 +12,9 @@ import { sendReminder } from "@/lib/notifications";
  * 3. rate_limits: hits older than two days are removed.
  *
  * Answers with counts only, nothing personal. A step that fails does not stop
- * the others; the answer is then 500, so the cron service reports it.
+ * the others; the answer is then 500, so the cron service reports it. Without
+ * the right secret the answer is always the same 401, also when CRON_SECRET is
+ * not set at all: the log says which (security review, finding 6).
  */
 
 /** Up to a minute per run; e-mails go out one by one. */
@@ -33,11 +35,8 @@ function authorized(request: Request, secret: string): boolean {
 
 export async function GET(request: Request) {
   const secret = process.env.CRON_SECRET;
-  if (!secret) {
-    console.error("[cron] CRON_SECRET is not set: the job does not run");
-    return Response.json({ error: "not configured" }, { status: 503 });
-  }
-  if (!authorized(request, secret)) return Response.json({ error: "unauthorized" }, { status: 401 });
+  if (!secret) console.error("[cron] CRON_SECRET is not set: the job does not run");
+  if (!secret || !authorized(request, secret)) return Response.json({ error: "unauthorized" }, { status: 401 });
 
   const now = new Date();
   const errors: string[] = [];
@@ -64,11 +63,11 @@ export async function GET(request: Request) {
   try {
     rateLimitsDeleted = await deleteOldRateLimitHits(new Date(now.getTime() - RATE_LIMIT_KEEP_MS));
   } catch {
-    errors.push("rate_limits");
+    errors.push("cleanup");
   }
 
   return Response.json(
-    { reminders, anonymized, rate_limits_deleted: rateLimitsDeleted, errors },
+    { reminders, anonymized, cleaned: rateLimitsDeleted, errors },
     { status: errors.length ? 500 : 200, headers: { "Cache-Control": "no-store" } },
   );
 }

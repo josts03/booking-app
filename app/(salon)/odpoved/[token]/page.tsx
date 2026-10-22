@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { canCancel, cancelDeadline } from "@/lib/cancel";
 import { getCurrentSalon, isBookable } from "@/lib/current-salon";
-import { getBookingByCancelToken, getServices, getStaff } from "@/lib/data";
+import { getBookingByCancelToken } from "@/lib/data";
 import { formatDateTime, formatDuration, formatPrice, formatTime, formatWeekdayDate } from "@/lib/format";
 import { buttonSecondary } from "../../_components/ui";
 import { CancelForm } from "./cancel-form";
@@ -27,8 +27,9 @@ export default async function CancelPage({ params, searchParams }: PageProps<"/o
   if (!salon) notFound();
   if (!isBookable(salon)) return null; // the layout shows the "unavailable" page
 
-  const booking = await getBookingByCancelToken(token);
-  if (!booking || booking.salon_id !== salon.id) {
+  // Looked up by the full token, only in this salon.
+  const view = await getBookingByCancelToken(salon.id, token);
+  if (!view) {
     return (
       <Message title="Rezervacije ni mogoče najti">
         Povezava je morda nepopolna. Odprite jo še enkrat iz e-pošte ali pokličite salon.
@@ -36,18 +37,13 @@ export default async function CancelPage({ params, searchParams }: PageProps<"/o
     );
   }
 
-  const [services, staff] = await Promise.all([
-    getServices(salon.id, { includeInactive: true }),
-    getStaff(salon.id, { includeInactive: true }),
-  ]);
-  const service = services.find((s) => s.id === booking.service_id);
-  const member = staff.find((s) => s.id === booking.staff_id);
+  const { booking, service, staffName } = view;
   const tz = salon.timezone;
   const now = new Date();
 
   const rows: [string, string][] = [
     ["Storitev", service ? `${service.name} · ${formatDuration(service.duration_min)}` : "—"],
-    ["Zaposleni", member?.name ?? "—"],
+    ["Zaposleni", staffName ?? "—"],
     ["Termin", `${formatWeekdayDate(booking.starts_at, tz)} ob ${formatTime(booking.starts_at, tz)}`],
     ["Cena", formatPrice(booking.price_cents)],
   ];

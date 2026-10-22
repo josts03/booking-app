@@ -1,5 +1,5 @@
 /**
- * Week 9 against the REAL Supabase project (npm run test:live): what the salon
+ * Week 9 against a real Supabase project, the separate test one in .env.test (npm run test:live): what the salon
  * owner changes (staff, working hours, absences, who performs a service,
  * settings) and that the booking page follows at once. Everything runs in a
  * temporary salon of its own, so the test salon's hours and settings are never
