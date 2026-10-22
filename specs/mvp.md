@@ -40,6 +40,9 @@
 
 ## Kaj NI v MVP
 
+Email marketing (opomnik za ponoven obisk, novice) pride po MVP kot plačljiv
+dodatek: načrt v `specs/email-marketing.md`.
+
 SMS, WhatsApp, Google Calendar, vgradni widget, lastna domena salona,
 čakalna lista, are in spletna plačila, skupinski termini, sobe in oprema,
 darilni boni, zvestoba, večjezičnost, mobilna aplikacija, Stripe naročnine,
