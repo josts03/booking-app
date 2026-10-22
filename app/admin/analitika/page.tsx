@@ -65,6 +65,15 @@ export default async function AnalyticsPage({ searchParams }: PageProps<"/admin/
     },
   ];
 
+  // Comparison: everyone in the salon's order; former staff only if they worked in the period.
+  const staffById = new Map(staff.map((member) => [member.id, member]));
+  const comparison = stats.staff
+    .flatMap((stat) => {
+      const member = staffById.get(stat.staff_id);
+      return member && (member.is_active || stat.bookings > 0) ? [{ stat, member }] : [];
+    })
+    .sort((a, b) => a.member.sort_order - b.member.sort_order);
+
   const bars = stats.weeks.map((week, index) => {
     const label = format(parseISO(week.week_start), "d. M.");
     return {
@@ -118,6 +127,61 @@ export default async function AnalyticsPage({ searchParams }: PageProps<"/admin/
         detailName="Prihodek"
         bars={bars}
       />
+
+      {comparison.length > 0 && (
+        <section className={`${card} p-4 sm:p-5`}>
+          <h2 className="font-semibold">Primerjava zaposlenih</h2>
+          <p className="text-sm text-ink-muted">
+            Isto obdobje kot zgoraj. Zasedenost je izračunana iz sedanjega tedenskega urnika.
+          </p>
+          <ul className="mt-4 grid gap-x-8 divide-y divide-line lg:grid-cols-2 lg:divide-y-0">
+            {comparison.map(({ stat, member }) => (
+              <li key={member.id} className="space-y-2 py-4 first:pt-0 lg:py-0 lg:pb-5">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="flex min-w-0 items-center gap-2 font-medium">
+                    <span
+                      aria-hidden="true"
+                      className="size-3 shrink-0 rounded-full"
+                      style={{ backgroundColor: member.color ?? "#64748b" }}
+                    />
+                    <span className="truncate">{member.name}</span>
+                    {!member.is_active && <span className="shrink-0 text-xs text-ink-muted">(neaktiven)</span>}
+                  </span>
+                  <span className="shrink-0 text-sm text-ink-muted">
+                    <span className="font-semibold text-ink tabular-nums">
+                      {stat.occupancy === null ? "—" : formatPercent(stat.occupancy)}
+                    </span>{" "}
+                    zasedeno
+                  </span>
+                </div>
+                {/* A meter: one ratio against the whole working time. The value is the text above. */}
+                <div aria-hidden="true" className="h-2 overflow-hidden rounded-full bg-brand-soft">
+                  <div
+                    className="h-full rounded-full bg-brand"
+                    style={{ width: `${Math.min(100, Math.round((stat.occupancy ?? 0) * 100))}%` }}
+                  />
+                </div>
+                <dl className="grid grid-cols-3 gap-2 text-sm">
+                  <div>
+                    <dt className="text-ink-muted">Rezervacije</dt>
+                    <dd className="font-semibold tabular-nums">{formatNumber(stat.bookings)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-ink-muted">Prihodek</dt>
+                    <dd className="font-semibold tabular-nums">{formatPrice(stat.revenue_cents)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-ink-muted">Neprihodi</dt>
+                    <dd className="font-semibold tabular-nums">
+                      {stat.no_show_rate === null ? "—" : formatPercent(stat.no_show_rate)}
+                    </dd>
+                  </div>
+                </dl>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }

@@ -37,6 +37,18 @@ export interface WeekStat {
   revenue_cents: number;
 }
 
+/** One staff member's numbers in the same period, by the same rules as the totals. */
+export interface StaffStat {
+  staff_id: string;
+  bookings: number;
+  revenue_cents: number;
+  /** Their booked minutes / their working minutes, 0..1 (null without working hours, e.g. inactive). */
+  occupancy: number | null;
+  no_show_rate: number | null;
+  completed: number;
+  no_shows: number;
+}
+
 export interface Analytics {
   /** Bookings that took place or were no-shows. Cancelled ones are not counted. */
   bookings: number;
@@ -50,7 +62,21 @@ export interface Analytics {
   no_shows: number;
   /** Oldest first; the last one is the current (partial) week. */
   weeks: WeekStat[];
+  /** Everyone with bookings or working hours in the period, in order of first appearance. */
+  staff: StaffStat[];
 }
+
+interface StaffTotals {
+  staff_id: string;
+  bookings: number;
+  revenue_cents: number;
+  booked_minutes: number;
+  available_minutes: number;
+  completed: number;
+  no_shows: number;
+}
+
+const rate = (part: number, whole: number) => (whole > 0 ? part / whole : null);
 
 const DAY_FORMAT = "yyyy-MM-dd";
 
@@ -68,11 +94,15 @@ export function computeAnalytics(input: AnalyticsInput): Analytics {
     weekStats.set(key, { week_start: key, bookings: 0, revenue_cents: 0 });
   }
 
-  let counted = 0;
-  let revenue = 0;
-  let bookedMinutes = 0;
-  let completed = 0;
-  let noShows = 0;
+  const perStaff = new Map<string, StaffTotals>();
+  const staffTotals = (staffId: string): StaffTotals => {
+    let totals = perStaff.get(staffId);
+    if (!totals) {
+      totals = { staff_id: staffId, bookings: 0, revenue_cents: 0, booked_minutes: 0, available_minutes: 0, completed: 0, no_shows: 0 };
+      perStaff.set(staffId, totals);
+    }
+    return totals;
+  };
 
   for (const booking of bookings) {
     const start = parseISO(booking.starts_at);
@@ -84,20 +114,20 @@ export function computeAnalytics(input: AnalyticsInput): Analytics {
     const stat = weekStats.get(format(monday, DAY_FORMAT));
     if (!stat) continue;
 
-    counted += 1;
+    const member = staffTotals(booking.staff_id);
     stat.bookings += 1;
-    bookedMinutes += differenceInMinutes(parseISO(booking.ends_at), start);
+    member.bookings += 1;
+    member.booked_minutes += differenceInMinutes(parseISO(booking.ends_at), start);
     if (booking.status === "completed") {
-      completed += 1;
-      revenue += booking.price_cents;
+      member.completed += 1;
+      member.revenue_cents += booking.price_cents;
       stat.revenue_cents += booking.price_cents;
     } else if (booking.status === "no_show") {
-      noShows += 1;
+      member.no_shows += 1;
     }
   }
 
   // Working minutes from the start of the period until now, minus time off.
-  let availableMinutes = 0;
   const dayCount = differenceInCalendarDays(parseISO(today), firstMonday) + 1;
   for (let i = 0; i < dayCount; i++) {
     const date = addDays(firstMonday, i);
@@ -116,17 +146,30 @@ export function computeAnalytics(input: AnalyticsInput): Analytics {
         const overlapTo = Math.min(to.getTime(), parseISO(off.ends_at).getTime());
         if (overlapTo > overlapFrom) minutes -= (overlapTo - overlapFrom) / 60_000;
       }
-      availableMinutes += Math.max(0, minutes);
+      staffTotals(hours.staff_id).available_minutes += Math.max(0, minutes);
     }
   }
 
+  const members = [...perStaff.values()];
+  const sum = (key: keyof Omit<StaffTotals, "staff_id">) => members.reduce((total, m) => total + m[key], 0);
+  const completed = sum("completed");
+  const noShows = sum("no_shows");
   return {
-    bookings: counted,
-    revenue_cents: revenue,
-    occupancy: availableMinutes > 0 ? bookedMinutes / availableMinutes : null,
-    no_show_rate: completed + noShows > 0 ? noShows / (completed + noShows) : null,
+    bookings: sum("bookings"),
+    revenue_cents: sum("revenue_cents"),
+    occupancy: rate(sum("booked_minutes"), sum("available_minutes")),
+    no_show_rate: rate(noShows, completed + noShows),
     completed,
     no_shows: noShows,
     weeks: [...weekStats.values()],
+    staff: members.map((m) => ({
+      staff_id: m.staff_id,
+      bookings: m.bookings,
+      revenue_cents: m.revenue_cents,
+      occupancy: rate(m.booked_minutes, m.available_minutes),
+      no_show_rate: rate(m.no_shows, m.completed + m.no_shows),
+      completed: m.completed,
+      no_shows: m.no_shows,
+    })),
   };
 }
