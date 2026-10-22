@@ -339,6 +339,30 @@ describe("functions", () => {
     assert.deepEqual(row, { gone_from_public: true, authenticated: true, anon: false, anon_schema: false });
   });
 
+  test("007: replace_staff_hours swaps a whole week in one step, for the server only", async () => {
+    const call = (staff: string, hours: unknown, salon = TEST) =>
+      outcome(`select public.replace_staff_hours($1, $2, $3::jsonb)`, [salon, staff, JSON.stringify(hours)]);
+    const week = async () =>
+      (await rows(`select weekday, start_time::text as s, end_time::text as e from staff_hours where staff_id = $1 order by weekday, start_time`, [MAJA]))
+        .map((r) => `${r.weekday} ${r.s}-${r.e}`);
+
+    await as("service_role", null, async () => {
+      assert.equal(await call(MAJA, [{ weekday: 2, start_time: "08:00", end_time: "12:00" }, { weekday: 2, start_time: "13:00", end_time: "16:00" }]), "ok");
+      assert.deepEqual(await week(), ["2 08:00:00-12:00:00", "2 13:00:00-16:00:00"]);
+      // A bad window (end before start) fails the whole call: the week stays as it was.
+      assert.equal(await call(MAJA, [{ weekday: 3, start_time: "09:00", end_time: "17:00" }, { weekday: 4, start_time: "17:00", end_time: "09:00" }]), CHECK);
+      assert.deepEqual(await week(), ["2 08:00:00-12:00:00", "2 13:00:00-16:00:00"]);
+      // Another salon's staff member, or this salon's member under another salon: refused.
+      assert.equal(await call(OTHER_STAFF, []), FOREIGN_KEY);
+      assert.equal(await call(MAJA, [], OTHER), FOREIGN_KEY);
+    });
+    for (const role of ["anon", "authenticated"] as const) {
+      await as(role, role === "authenticated" ? OWNER_TEST : null, async () => {
+        assert.equal(await call(MAJA, []), DENIED, role);
+      });
+    }
+  });
+
   test("every table has RLS on", async () => {
     assert.equal(
       await count(`select count(*) from pg_tables where schemaname = 'public' and not rowsecurity`),
@@ -462,6 +486,19 @@ describe("rules the database enforces for everyone (even the server)", () => {
       assert.equal(await add("reschedule"), "ok");
       assert.equal(await add("reschedule"), "ok"); // a booking can be moved more than once
       assert.equal(await add("sms-spam"), CHECK);
+    });
+  });
+
+  test("007: the salon's sentence for the confirmation e-mail, at most 500 characters", async () => {
+    await as("postgres", null, async () => {
+      const set = (value: string | null) => outcome(`update salons set confirmation_note = $1 where id = '${TEST}'`, [value]);
+      assert.equal(await set("Parkirate lahko za hišo."), "ok");
+      assert.equal(await set(null), "ok");
+      assert.equal(await set("x".repeat(501)), CHECK);
+    });
+    // The salon's own admin may change it, like its other settings.
+    await as("authenticated", OWNER_TEST, async () => {
+      assert.equal(await affected(`update salons set confirmation_note = 'Dobrodošli' where id = '${TEST}'`), 1);
     });
   });
 
