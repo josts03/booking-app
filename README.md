@@ -131,6 +131,9 @@ jih ustavi, če `.env.test` ni ali kaže na isti projekt kot `.env.local`.
    ```
    E-pošte testi ne pošiljajo (ponarejen pošiljatelj), zato Resend ključ ni potreben.
 
+Vsako novo migracijo poženi v **obeh** projektih, pravem in testnem. Pri lepljenju
+iz terminala: `LANG=en_US.UTF-8 pbcopy < datoteka.sql`, sicer se šumniki pokvarijo.
+
 **Testi baze** (`tests/db.test.ts`) poženejo migracije in seed v pravem Postgresu
 v pomnilniku in preverijo varnostni seznam iz `specs/security.md`: anonimni
 obiskovalec ne bere strank in rezervacij, admin vidi samo svoj salon, termini se
