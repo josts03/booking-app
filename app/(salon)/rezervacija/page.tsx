@@ -134,6 +134,7 @@ export default async function BookingPage({ searchParams }: PageProps<"/rezervac
             staff={staffParam}
             time={time}
             pickAnotherTimeHref={timeHref}
+            turnstileSiteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || null}
           />
         </section>
       )}

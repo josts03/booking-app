@@ -10,6 +10,7 @@ import { localDay } from "@/lib/format";
 import { sendBookingConfirmation } from "@/lib/notifications";
 import { normalizePhone } from "@/lib/phone";
 import { clientIp, RATE_LIMITS, rateLimitBucket } from "@/lib/rate-limit";
+import { TURNSTILE_MESSAGES, verifyTurnstile } from "@/lib/turnstile";
 
 export type FieldName = "first_name" | "last_name" | "phone" | "email" | "note" | "terms";
 
@@ -71,6 +72,7 @@ function text(formData: FormData, key: string): string {
  * (or "any") and which start time; lib/data.ts createBooking checks all of it
  * again against the database.
  *
+ * Bots: the Cloudflare Turnstile token is checked first (lib/turnstile.ts).
  * Rate limits (specs/security.md): 5 bookings per IP address an hour, 3 per
  * phone number a day. Only bookings that were made count, so a visitor whose
  * time was taken meanwhile can simply try another one.
@@ -123,6 +125,11 @@ export async function submitBooking(_previous: FormState, formData: FormData): P
 
   const now = new Date();
   const ip = clientIp(await headers());
+  const human = await verifyTurnstile(text(formData, "cf-turnstile-response"), ip);
+  if (human === "missing" || human === "invalid" || human === "unavailable") {
+    return { message: TURNSTILE_MESSAGES[human], values };
+  }
+
   const limits = [
     ...(ip ? [{ rule: RATE_LIMITS.bookingPerIp, bucket: rateLimitBucket(RATE_LIMITS.bookingPerIp, ip) }] : []),
     { rule: RATE_LIMITS.bookingPerPhone, bucket: rateLimitBucket(RATE_LIMITS.bookingPerPhone, contact.data.phone) },

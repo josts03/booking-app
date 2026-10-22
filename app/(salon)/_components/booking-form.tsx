@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useActionState } from "react";
 import { submitBooking, type FieldName, type FormState } from "../rezervacija/actions";
+import { Turnstile } from "./turnstile";
 import { buttonPrimary } from "./ui";
 
 interface Props {
@@ -11,12 +12,14 @@ interface Props {
   time: string;
   /** Where to pick another time, shown when the chosen one is gone. */
   pickAnotherTimeHref: string;
+  /** Cloudflare Turnstile site key; null: no widget (development without keys). */
+  turnstileSiteKey: string | null;
 }
 
 const inputClass =
   "h-12 w-full rounded-control border bg-surface px-4 text-base placeholder:text-ink-muted/60";
 
-export function BookingForm({ service, staff, time, pickAnotherTimeHref }: Props) {
+export function BookingForm({ service, staff, time, pickAnotherTimeHref, turnstileSiteKey }: Props) {
   const [state, formAction, pending] = useActionState<FormState, FormData>(submitBooking, null);
   const errors = state?.errors ?? {};
   const values = state?.values ?? {};
@@ -76,6 +79,8 @@ export function BookingForm({ service, staff, time, pickAnotherTimeHref }: Props
           <span className="text-ink-muted">(neobvezno)</span>
         </Checkbox>
       </div>
+
+      {turnstileSiteKey && <Turnstile siteKey={turnstileSiteKey} resetKey={state} />}
 
       {state?.message && (
         <div role="alert" className="rounded-control border border-danger/30 bg-danger/5 p-4 text-danger">
