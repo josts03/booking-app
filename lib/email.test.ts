@@ -174,6 +174,16 @@ describe("salon's own actions", () => {
   });
 });
 
+test("007: the salon's own sentence is in confirmations and reminders, escaped, not in a cancellation", () => {
+  const withNote = { ...salon, confirmation_note: "Parkirate lahko za hišo <b>A</b>." };
+  const confirmation = confirmationEmail(emailData({ salon: withNote }), NOW);
+  assert.ok(confirmation.text.includes("Parkirate lahko za hišo <b>A</b>."));
+  assert.ok(confirmation.html.includes("Parkirate lahko za hišo &lt;b&gt;A&lt;/b&gt;."));
+  assert.ok(reminderEmail(emailData({ salon: withNote }), NOW).text.includes("Parkirate lahko za hišo"));
+  const cancelled = cancellationEmail(emailData({ salon: withNote, booking: { ...booking, status: "cancelled" } }), NOW);
+  assert.ok(!cancelled.text.includes("Parkirate"));
+});
+
 test("escapeHtml", () => {
   assert.equal(escapeHtml(`<b>"Ana" & 'Bor'</b>`), "&lt;b&gt;&quot;Ana&quot; &amp; &#39;Bor&#39;&lt;/b&gt;");
 });

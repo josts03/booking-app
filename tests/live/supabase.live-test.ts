@@ -210,7 +210,7 @@ describe("lib/data.ts against the live database", () => {
     await assert.rejects(() => getBookings(SALON, new Date(0), new Date()), /No admin access/);
     await assert.rejects(
       () => updateService(SALON, MENS_CUT.id, { name: "X", category: null, duration_min: 30, buffer_after_min: 0, price_cents: 1, is_active: true }),
-      /No admin access/,
+      /No owner access/, // services: the owner only (decision of 22. 10. 2026)
     );
     // Nothing changed.
     assert.equal((await getServices(SALON)).find((s) => s.id === MENS_CUT.id)?.price_cents, MENS_CUT.price_cents);

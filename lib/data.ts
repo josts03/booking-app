@@ -43,6 +43,7 @@ import { publicDb } from "./supabase/public";
 import type { BookingEmailData } from "./email";
 import type {
   AdminBookingResult,
+  AffectedBooking,
   Booking,
   BookingMove,
   BookingStatus,
@@ -52,17 +53,21 @@ import type {
   CustomerSummary,
   FreeSlot,
   FreeSlotsQuery,
+  ManageResult,
   ManualBookingInput,
   NewBooking,
   NotificationKind,
   Salon,
+  SalonSettingsInput,
   SaveServiceResult,
   Service,
   ServiceInput,
   Staff,
   StaffHours,
+  StaffInput,
   StaffService,
   TimeOff,
+  Timestamptz,
   Uuid,
 } from "./types";
 
@@ -120,6 +125,17 @@ async function adminOnly(salonId: Uuid, context: string): Promise<SignedInUser> 
   if (user && (await getSalonRole(salonId, user.id))) return user;
   console.error(`[data] ${context} refused: no admin access`);
   throw new Error(`No admin access: ${context}`);
+}
+
+/**
+ * Owner-only changes: staff, working hours, absences, services and the salon's
+ * settings (decision of 22. 10. 2026). Staff members manage bookings only.
+ */
+async function ownerOnly(salonId: Uuid, context: string): Promise<SignedInUser> {
+  const user = await getSignedInUser();
+  if (user && (await getSalonRole(salonId, user.id)) === "owner") return user;
+  console.error(`[data] ${context} refused: not the salon's owner`);
+  throw new Error(`No owner access: ${context}`);
 }
 
 type QueryResult<T> = { data: T | null; error: PostgrestError | null };
@@ -505,7 +521,7 @@ function serviceColumns(input: ServiceInput) {
 }
 
 export async function createService(salonId: Uuid, input: ServiceInput): Promise<SaveServiceResult> {
-  await adminOnly(salonId, "createService");
+  await ownerOnly(salonId, "createService");
   if (!isUuid(salonId) || !validService(input)) return { ok: false, error: SERVICE_INVALID };
   const db = adminDb();
 
@@ -542,7 +558,7 @@ export async function updateService(
   serviceId: Uuid,
   input: ServiceInput,
 ): Promise<SaveServiceResult> {
-  await adminOnly(salonId, "updateService");
+  await ownerOnly(salonId, "updateService");
   if (!isUuid(salonId) || !isUuid(serviceId) || !validService(input)) {
     return { ok: false, error: SERVICE_INVALID };
   }
@@ -827,7 +843,7 @@ export async function getNotificationData(bookingId: Uuid): Promise<Notification
       "getNotificationData(salon)",
       db
         .from("salons")
-        .select("name, slug, email, phone, address, timezone, brand_color, cancel_window_hours")
+        .select("name, slug, email, phone, address, timezone, brand_color, cancel_window_hours, confirmation_note")
         .eq("id", booking.salon_id)
         .single<BookingEmailData["salon"]>(),
     ),
@@ -1187,10 +1203,11 @@ async function audit(
   action: string,
   entityId: Uuid,
   payload: Record<string, unknown>,
+  entity = "booking",
 ): Promise<void> {
   const { error } = await adminDb()
     .from("audit_log")
-    .insert({ salon_id: salonId, actor_user_id: actor.id, action, entity: "booking", entity_id: entityId, payload });
+    .insert({ salon_id: salonId, actor_user_id: actor.id, action, entity, entity_id: entityId, payload });
   if (error) console.error(`[data] audit(${action}) failed: ${error.code} ${error.message}`);
 }
 
@@ -1537,5 +1554,332 @@ export async function rescheduleBooking(
     return { ok: true, booking: data };
   } catch {
     return { ok: false, error: ADMIN_MESSAGES.failed };
+  }
+}
+
+// ---------- owner: staff, working hours, absences, who performs, settings (week 9) ----------
+
+export const MANAGE_MESSAGES = {
+  invalid: "Preverite vnos.",
+  staffNotFound: "Zaposlenega ni mogoče najti. Osvežite stran.",
+  serviceNotFound: "Storitve ni mogoče najti. Osvežite stran.",
+  notFound: "Tega ni mogoče najti. Osvežite stran.",
+  failed: "Sprememb trenutno ni mogoče shraniti. Poskusite znova čez nekaj minut.",
+} as const;
+
+const HEX = /^#[0-9a-fA-F]{6}$/;
+const AFFECTED_DAYS = 365;
+
+/**
+ * Future pending/confirmed bookings in [from, to) that no longer fit their
+ * staff member's working hours or overlap an absence (lib/working-hours.ts).
+ * They are not changed: the salon moves or cancels them (decision of 22. 10. 2026).
+ */
+async function affectedBookings(salonId: Uuid, staffIds: Uuid[], from: Date, to: Date): Promise<AffectedBooking[]> {
+  if (staffIds.length === 0) return [];
+  const db = adminDb();
+  const [salon, bookings, hours, timeOff] = await Promise.all([
+    must("affectedBookings(salon)", db.from("salons").select("timezone").eq("id", salonId).single<Pick<Salon, "timezone">>()),
+    selectAll("affectedBookings(bookings)", (first, last) =>
+      db
+        .from("bookings")
+        .select("id, staff_id, customer_id, starts_at, ends_at, buffer_min")
+        .eq("salon_id", salonId)
+        .in("staff_id", staffIds)
+        .in("status", ["pending", "confirmed"])
+        .gte("starts_at", from.toISOString())
+        .lt("starts_at", to.toISOString())
+        .order("starts_at")
+        .order("id")
+        .range(first, last)
+        .returns<Pick<Booking, "id" | "staff_id" | "customer_id" | "starts_at" | "ends_at" | "buffer_min">[]>(),
+    ),
+    must(
+      "affectedBookings(hours)",
+      db.from("staff_hours").select("staff_id, weekday, start_time, end_time").eq("salon_id", salonId).in("staff_id", staffIds)
+        .returns<Pick<StaffHours, "staff_id" | "weekday" | "start_time" | "end_time">[]>(),
+    ),
+    must(
+      "affectedBookings(time_off)",
+      db.from("time_off").select("staff_id, starts_at, ends_at").eq("salon_id", salonId).gt("ends_at", from.toISOString())
+        .returns<Pick<TimeOff, "staff_id" | "starts_at" | "ends_at">[]>(),
+    ),
+  ]);
+  const misfits = bookings.filter(
+    (b) =>
+      workingHoursProblem({
+        staffId: b.staff_id,
+        start: new Date(b.starts_at),
+        busyEnd: addMinutes(new Date(b.ends_at), b.buffer_min),
+        hours,
+        timeOff,
+        timeZone: salon.timezone,
+      }) !== null,
+  );
+  if (misfits.length === 0) return [];
+  const customers = await must(
+    "affectedBookings(customers)",
+    db.from("customers").select("id, first_name, last_name").eq("salon_id", salonId).in("id", [...new Set(misfits.map((b) => b.customer_id))])
+      .returns<Pick<Customer, "id" | "first_name" | "last_name">[]>(),
+  );
+  const names = new Map(customers.map((c) => [c.id, `${c.first_name} ${c.last_name ?? ""}`.trim()]));
+  return misfits.map((b) => ({
+    id: b.id,
+    starts_at: b.starts_at,
+    ends_at: b.ends_at,
+    staff_id: b.staff_id,
+    customer_name: names.get(b.customer_id) ?? "Neznana stranka",
+  }));
+}
+
+function cleanStaff(input: StaffInput): StaffInput | null {
+  const name = input.name.trim();
+  const email = input.email?.trim() || null;
+  const phone = input.phone?.trim() || null;
+  if (!name || name.length > 60 || !HEX.test(input.color) || (email ?? "").length > 254 || (phone ?? "").length > 40) return null;
+  return { name, color: input.color, email, phone, is_active: input.is_active };
+}
+
+/** A new staff member: active, no working hours and no services yet (the owner sets them next). */
+export async function createStaff(salonId: Uuid, input: Pick<StaffInput, "name" | "color">): Promise<ManageResult<Staff>> {
+  const actor = await ownerOnly(salonId, "createStaff");
+  const clean = cleanStaff({ ...input, email: null, phone: null, is_active: true });
+  if (!isUuid(salonId) || !clean) return { ok: false, error: MANAGE_MESSAGES.invalid };
+  try {
+    const db = adminDb();
+    const last = await must(
+      "createStaff(order)",
+      db.from("staff").select("sort_order").eq("salon_id", salonId).order("sort_order", { ascending: false }).limit(1).returns<{ sort_order: number }[]>(),
+    );
+    const { data, error } = await db
+      .from("staff")
+      .insert({ salon_id: salonId, name: clean.name, color: clean.color, is_active: true, sort_order: (last[0]?.sort_order ?? 0) + 1 })
+      .select("*")
+      .single<Staff>();
+    if (error) fail("createStaff(insert)", error);
+    await audit(salonId, actor, "staff.create", data.id, { name: data.name }, "staff");
+    return { ok: true, value: data, affected: [] };
+  } catch {
+    return { ok: false, error: MANAGE_MESSAGES.failed };
+  }
+}
+
+/**
+ * Name, color, contact and active. Not active while the staff member still has
+ * future bookings (decision of 22. 10. 2026): an inactive staff member's
+ * bookings would vanish from the calendar.
+ */
+export async function updateStaff(salonId: Uuid, staffId: Uuid, input: StaffInput, now: Date = new Date()): Promise<ManageResult<Staff>> {
+  const actor = await ownerOnly(salonId, "updateStaff");
+  const clean = cleanStaff(input);
+  if (!isUuid(staffId) || !clean) return { ok: false, error: MANAGE_MESSAGES.invalid };
+  try {
+    const db = adminDb();
+    if (!clean.is_active) {
+      const { count, error } = await db
+        .from("bookings")
+        .select("id", { count: "exact", head: true })
+        .eq("salon_id", salonId)
+        .eq("staff_id", staffId)
+        .in("status", ["pending", "confirmed"])
+        .gte("ends_at", now.toISOString());
+      if (error) fail("updateStaff(bookings)", error);
+      if (count) {
+        return {
+          ok: false,
+          error: `Število prihodnjih terminov tega zaposlenega: ${count}. Najprej jih prestavite ali odpovejte, nato ga nastavite kot neaktivnega.`,
+        };
+      }
+    }
+    const { data, error } = await db
+      .from("staff")
+      .update(clean)
+      .eq("id", staffId)
+      .eq("salon_id", salonId)
+      .select("*")
+      .maybeSingle<Staff>();
+    if (error) fail("updateStaff(update)", error);
+    if (!data) return { ok: false, error: MANAGE_MESSAGES.staffNotFound };
+    await audit(salonId, actor, "staff.update", staffId, { ...clean, email: undefined, phone: undefined }, "staff");
+    return { ok: true, value: data, affected: [] };
+  } catch {
+    return { ok: false, error: MANAGE_MESSAGES.failed };
+  }
+}
+
+/**
+ * Replaces the staff member's whole week in one statement (replace_staff_hours,
+ * 007): a failure leaves the old week. `rows` are checked by lib/schedule.ts
+ * checkWeek first. Free slots change at once (nothing is cached). Returns the
+ * future bookings that no longer fit.
+ */
+export async function setStaffHours(
+  salonId: Uuid,
+  staffId: Uuid,
+  rows: Pick<StaffHours, "weekday" | "start_time" | "end_time">[],
+  now: Date = new Date(),
+): Promise<ManageResult<null>> {
+  const actor = await ownerOnly(salonId, "setStaffHours");
+  if (!isUuid(staffId) || rows.length > 21) return { ok: false, error: MANAGE_MESSAGES.invalid };
+  try {
+    const { error } = await adminDb().rpc("replace_staff_hours", { p_salon_id: salonId, p_staff_id: staffId, p_hours: rows });
+    if (error?.code === "23503") return { ok: false, error: MANAGE_MESSAGES.staffNotFound };
+    if (error?.code === "23514" || error?.code === "22007" || error?.code === "22008") return { ok: false, error: MANAGE_MESSAGES.invalid };
+    if (error) fail("setStaffHours(rpc)", error);
+    await audit(salonId, actor, "staff.hours", staffId, { rows }, "staff");
+    return { ok: true, value: null, affected: await affectedBookings(salonId, [staffId], now, addDays(now, AFFECTED_DAYS)) };
+  } catch {
+    return { ok: false, error: MANAGE_MESSAGES.failed };
+  }
+}
+
+/**
+ * An absence of one staff member, or the whole salon closed (`staff_id` null).
+ * The reason stays private: visitors cannot read it (003_rls.sql). Returns the
+ * bookings it now covers.
+ */
+export async function addTimeOff(
+  salonId: Uuid,
+  input: { staff_id: Uuid | null; starts_at: Timestamptz; ends_at: Timestamptz; reason: string | null },
+): Promise<ManageResult<TimeOff>> {
+  const actor = await ownerOnly(salonId, "addTimeOff");
+  const start = new Date(input.starts_at);
+  const end = new Date(input.ends_at);
+  const reason = input.reason?.trim() || null;
+  if (
+    (input.staff_id !== null && !isUuid(input.staff_id)) ||
+    Number.isNaN(start.getTime()) ||
+    Number.isNaN(end.getTime()) ||
+    end <= start ||
+    (reason ?? "").length > 200
+  ) {
+    return { ok: false, error: MANAGE_MESSAGES.invalid };
+  }
+  try {
+    const db = adminDb();
+    const { data, error } = await db
+      .from("time_off")
+      .insert({ salon_id: salonId, staff_id: input.staff_id, starts_at: start.toISOString(), ends_at: end.toISOString(), reason })
+      .select("*")
+      .single<TimeOff>();
+    // 23503: a staff member of another salon (composite key, 002_constraints.sql).
+    if (error?.code === "23503") return { ok: false, error: MANAGE_MESSAGES.staffNotFound };
+    if (error) fail("addTimeOff(insert)", error);
+    await audit(salonId, actor, "time_off.create", data.id, { staff_id: data.staff_id, starts_at: data.starts_at, ends_at: data.ends_at }, "time_off");
+
+    const staffIds = input.staff_id
+      ? [input.staff_id]
+      : (await must("addTimeOff(staff)", db.from("staff").select("id").eq("salon_id", salonId).returns<{ id: string }[]>())).map((m) => m.id);
+    return { ok: true, value: data, affected: await affectedBookings(salonId, staffIds, start, end) };
+  } catch {
+    return { ok: false, error: MANAGE_MESSAGES.failed };
+  }
+}
+
+export async function deleteTimeOff(salonId: Uuid, timeOffId: Uuid): Promise<ManageResult<null>> {
+  const actor = await ownerOnly(salonId, "deleteTimeOff");
+  if (!isUuid(timeOffId)) return { ok: false, error: MANAGE_MESSAGES.notFound };
+  try {
+    const { data, error } = await adminDb()
+      .from("time_off")
+      .delete()
+      .eq("id", timeOffId)
+      .eq("salon_id", salonId)
+      .select("id")
+      .maybeSingle<{ id: string }>();
+    if (error) fail("deleteTimeOff", error);
+    if (!data) return { ok: false, error: MANAGE_MESSAGES.notFound };
+    await audit(salonId, actor, "time_off.delete", timeOffId, {}, "time_off");
+    return { ok: true, value: null, affected: [] };
+  } catch {
+    return { ok: false, error: MANAGE_MESSAGES.failed };
+  }
+}
+
+/**
+ * Who performs a service: exactly `staffIds` afterwards. New links first, then
+ * the removed ones, so a failure halfway never leaves fewer performers than
+ * before. Existing bookings stay; only new bookings follow the change.
+ */
+export async function setServiceStaff(salonId: Uuid, serviceId: Uuid, staffIds: Uuid[]): Promise<ManageResult<null>> {
+  const actor = await ownerOnly(salonId, "setServiceStaff");
+  const wanted = [...new Set(staffIds)];
+  if (!isUuid(serviceId) || !wanted.every(isUuid)) return { ok: false, error: MANAGE_MESSAGES.invalid };
+  try {
+    const db = adminDb();
+    const [service, members] = await Promise.all([
+      must("setServiceStaff(service)", db.from("services").select("id").eq("id", serviceId).eq("salon_id", salonId).maybeSingle<{ id: string }>()),
+      wanted.length
+        ? must("setServiceStaff(staff)", db.from("staff").select("id").eq("salon_id", salonId).in("id", wanted).returns<{ id: string }[]>())
+        : Promise.resolve([]),
+    ]);
+    if (!service) return { ok: false, error: MANAGE_MESSAGES.serviceNotFound };
+    if (members.length !== wanted.length) return { ok: false, error: MANAGE_MESSAGES.staffNotFound };
+
+    if (wanted.length) {
+      const { error } = await db
+        .from("staff_services")
+        .upsert(wanted.map((staff_id) => ({ staff_id, service_id: serviceId, salon_id: salonId })), {
+          onConflict: "staff_id,service_id",
+          ignoreDuplicates: true,
+        });
+      if (error) fail("setServiceStaff(add)", error);
+    }
+    let remove = db.from("staff_services").delete().eq("salon_id", salonId).eq("service_id", serviceId);
+    if (wanted.length) remove = remove.not("staff_id", "in", `(${wanted.join(",")})`);
+    const { error } = await remove;
+    if (error) fail("setServiceStaff(remove)", error);
+
+    await audit(salonId, actor, "service.staff", serviceId, { staff_ids: wanted }, "service");
+    return { ok: true, value: null, affected: [] };
+  } catch {
+    return { ok: false, error: MANAGE_MESSAGES.failed };
+  }
+}
+
+/** Same limits as the salons checks in 002_constraints.sql and 007. */
+function cleanSettings(input: SalonSettingsInput): SalonSettingsInput | null {
+  const text = (value: string | null, max: number) => {
+    const t = value?.trim() || null;
+    return t !== null && t.length > max ? undefined : t;
+  };
+  const name = input.name.trim();
+  const phone = text(input.phone, 40);
+  const email = text(input.email, 254);
+  const address = text(input.address, 200);
+  const note = text(input.confirmation_note, 500);
+  const whole = (n: number, min: number, max: number) => Number.isInteger(n) && n >= min && n <= max;
+  if (
+    !name ||
+    name.length > 80 ||
+    phone === undefined ||
+    email === undefined ||
+    address === undefined ||
+    note === undefined ||
+    !HEX.test(input.brand_color) ||
+    !whole(input.slot_interval_min, 5, 240) ||
+    !whole(input.min_lead_time_min, 0, 60 * 24 * 30) ||
+    !whole(input.max_days_ahead, 1, 365) ||
+    !whole(input.cancel_window_hours, 0, 24 * 30) ||
+    !whole(input.reminder_hours_before, 0, 24 * 7)
+  ) {
+    return null;
+  }
+  return { ...input, name, phone, email, address, confirmation_note: note };
+}
+
+/** The salon's own settings (never slug, subscription or time zone). */
+export async function updateSalonSettings(salonId: Uuid, input: SalonSettingsInput): Promise<ManageResult<Salon>> {
+  const actor = await ownerOnly(salonId, "updateSalonSettings");
+  const clean = cleanSettings(input);
+  if (!clean) return { ok: false, error: MANAGE_MESSAGES.invalid };
+  try {
+    const { data, error } = await adminDb().from("salons").update(clean).eq("id", salonId).select("*").single<Salon>();
+    if (error?.code === "23514") return { ok: false, error: MANAGE_MESSAGES.invalid };
+    if (error) fail("updateSalonSettings", error);
+    await audit(salonId, actor, "salon.settings", salonId, { ...clean, email: undefined, phone: undefined }, "salon");
+    return { ok: true, value: data, affected: [] };
+  } catch {
+    return { ok: false, error: MANAGE_MESSAGES.failed };
   }
 }

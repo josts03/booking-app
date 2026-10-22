@@ -102,6 +102,7 @@ export function buildFixtures(now: Date): Fixtures {
     cancel_window_hours: 24,
     require_confirmation: false,
     reminder_hours_before: 24,
+    confirmation_note: null,
     subscription_status: "trial",
     trial_ends_at: addDays(now, 14).toISOString(),
     created_at: addDays(now, -1).toISOString(),

@@ -53,6 +53,8 @@ export interface Salon {
   cancel_window_hours: number;
   require_confirmation: boolean;
   reminder_hours_before: number;
+  /** The salon's own sentence in the confirmation e-mail (007), at most 500 characters. */
+  confirmation_note: string | null;
   subscription_status: SubscriptionStatus;
   trial_ends_at: Timestamptz | null;
   created_at: Timestamptz;
@@ -271,3 +273,43 @@ export type SaveServiceResult =
   | { ok: true; service: Service }
   /** `error` is a friendly Slovenian sentence, safe to show. */
   | { ok: false; error: string };
+
+// ---------- admin: staff, hours, settings (week 9, owner only) ----------
+
+export interface StaffInput {
+  name: string;
+  color: string;
+  email: string | null;
+  phone: string | null;
+  is_active: boolean;
+}
+
+/** A future booking that no longer fits a changed schedule or a new absence: the salon moves it by hand. */
+export interface AffectedBooking {
+  id: Uuid;
+  starts_at: Timestamptz;
+  ends_at: Timestamptz;
+  staff_id: Uuid;
+  customer_name: string;
+}
+
+/** Result of the owner's changes. `error` is a friendly Slovenian sentence. */
+export type ManageResult<T> =
+  | { ok: true; value: T; affected: AffectedBooking[] }
+  | { ok: false; error: string };
+
+/** What the salon may change itself (not slug, subscription or time zone: those are the platform's). */
+export interface SalonSettingsInput {
+  name: string;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  brand_color: string;
+  slot_interval_min: number;
+  min_lead_time_min: number;
+  max_days_ahead: number;
+  cancel_window_hours: number;
+  require_confirmation: boolean;
+  reminder_hours_before: number;
+  confirmation_note: string | null;
+}

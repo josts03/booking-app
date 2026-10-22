@@ -24,7 +24,7 @@ export interface BookingEmailData {
   salon: Pick<
     Salon,
     "name" | "slug" | "email" | "phone" | "address" | "timezone" | "brand_color" | "cancel_window_hours"
-  >;
+  > & { confirmation_note?: string | null };
   booking: Pick<Booking, "status" | "starts_at" | "ends_at" | "price_cents" | "cancel_token">;
   serviceName: string;
   staffName: string;
@@ -112,6 +112,8 @@ function render(data: BookingEmailData, layout: Layout, now: Date): RenderedEmai
         : "Za odpoved ali spremembo se obrnite na salon.";
     button = { label: "Odpovej termin", textLabel: "Odpoved" };
   }
+  // The salon's own sentence (007), for a booking that is still coming, not for a cancellation.
+  const salonNote = layout.kind === "upcoming" && salon.confirmation_note ? oneLine(salon.confirmation_note, 500) : null;
   const replyNote = salon.email ? " Na to sporočilo lahko odgovorite, odgovor prejme salon." : "";
   const footer = `To sporočilo ste prejeli, ker ste rezervirali termin pri salonu ${salonName}.${replyNote}`;
 
@@ -123,6 +125,7 @@ function render(data: BookingEmailData, layout: Layout, now: Date): RenderedEmai
     "",
     ...rows.map(([label, value]) => `${label}: ${value}`),
     "",
+    ...(salonNote ? [salonNote, ""] : []),
     actionText,
     ...(link ? [`${button.textLabel}: ${link}`] : []),
     "",
@@ -163,6 +166,7 @@ function render(data: BookingEmailData, layout: Layout, now: Date): RenderedEmai
 <p style="margin:0 0 8px;font-size:15px;">Pozdravljeni, ${e(firstName)}!</p>
 <p style="margin:0 0 16px;font-size:15px;">${e(layout.lead)}</p>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${detailRows}</table>
+${salonNote ? `<p style="margin:16px 0 0;padding:12px;border-radius:8px;background:#faf8f5;font-size:15px;">${e(salonNote)}</p>` : ""}
 <p style="margin:16px 0 0;font-size:15px;">${e(actionText)}</p>
 ${buttonHtml}
 <p style="margin:24px 0;font-size:14px;color:#57534e;"><strong style="color:#1c1917;">${e(salonName)}</strong>${salon.address ? `<br>${e(oneLine(salon.address))}` : ""}${phoneHtml}</p>
