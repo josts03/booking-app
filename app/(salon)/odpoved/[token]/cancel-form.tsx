@@ -4,7 +4,7 @@ import { useActionState } from "react";
 import { cancelBookingAction, type CancelState } from "./actions";
 
 const dangerButton =
-  "inline-flex min-h-12 w-full items-center justify-center rounded-control bg-danger px-6 font-semibold text-white transition-colors hover:bg-danger/90 disabled:cursor-not-allowed disabled:opacity-60";
+  "inline-flex min-h-12 w-full items-center justify-center rounded-button bg-danger px-7 font-medium text-white transition-colors hover:bg-danger/90 disabled:cursor-not-allowed disabled:opacity-60";
 
 /** A POST with a button: opening the link alone (or a mail scanner) never cancels. */
 export function CancelForm({ token }: { token: string }) {

@@ -114,7 +114,7 @@ export default async function AnalyticsPage({ searchParams }: PageProps<"/admin/
         {tiles.map((tile) => (
           <div key={tile.label} className={`${card} p-4`}>
             <dt className="text-sm text-ink-muted">{tile.label}</dt>
-            <dd className="mt-1 text-3xl font-bold tracking-tight">{tile.value}</dd>
+            <dd className="mt-1 text-3xl font-semibold tracking-tight">{tile.value}</dd>
             <dd className="mt-1 text-xs text-ink-muted">{tile.note}</dd>
           </div>
         ))}

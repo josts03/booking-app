@@ -40,7 +40,7 @@ function Usage({ label, used, limit }: { label: string; used: number; limit: num
       <div className="flex items-baseline justify-between gap-3">
         <h2 className="text-sm text-ink-muted">{label}</h2>
         <p className="text-sm text-ink-muted">
-          <span className="text-2xl font-bold text-ink tabular-nums">{formatNumber(used)}</span> / {formatNumber(limit)}
+          <span className="text-2xl font-semibold text-ink tabular-nums">{formatNumber(used)}</span> / {formatNumber(limit)}
         </p>
       </div>
       {/* A meter against the plan's limit; the numbers above carry the value. */}

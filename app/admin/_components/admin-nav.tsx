@@ -53,7 +53,7 @@ export function AdminNav({ variant, isOwner = false }: { variant: "bottom" | "si
   const item =
     variant === "bottom"
       ? "flex min-h-14 flex-col items-center justify-center gap-0.5 text-[11px] font-medium"
-      : "flex min-h-11 items-center gap-3 rounded-control px-3 text-sm font-medium";
+      : "flex min-h-11 items-center gap-3 rounded-button px-4 text-sm font-medium";
 
   return (
     <nav aria-label="Glavni meni">

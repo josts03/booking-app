@@ -4,7 +4,7 @@ import type { Salon } from "@/lib/types";
 export function Unavailable({ salon }: { salon: Salon }) {
   return (
     <div className="rounded-card border border-line bg-surface p-6 text-center">
-      <h1 className="text-2xl font-bold">Naročanje trenutno ni mogoče</h1>
+      <h1 className="text-2xl font-semibold">Naročanje trenutno ni mogoče</h1>
       <p className="mt-3 text-ink-muted">
         Spletno naročanje pri salonu {salon.name} je začasno izklopljeno.
         {salon.phone ? " Za termin nas pokličite." : " Poskusite znova kasneje."}
@@ -12,7 +12,7 @@ export function Unavailable({ salon }: { salon: Salon }) {
       {salon.phone && (
         <a
           href={`tel:${salon.phone.replace(/\s/g, "")}`}
-          className="mt-5 inline-flex min-h-12 items-center justify-center rounded-control bg-brand px-6 font-semibold text-brand-foreground"
+          className="mt-5 inline-flex min-h-12 items-center justify-center rounded-button bg-brand px-7 font-medium text-brand-foreground hover:bg-brand-strong"
         >
           {salon.phone}
         </a>

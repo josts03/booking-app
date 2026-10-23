@@ -68,6 +68,24 @@ export function cancelUrl(salonSlug: string, cancelToken: string): string {
   return `${salonOrigin(salonSlug)}/odpoved/${encodeURIComponent(cancelToken)}`;
 }
 
+/**
+ * The Termi brand (app/globals.css) as e-mail clients need it: plain hex in
+ * inline styles. Salon e-mails add the salon's own color on top; the
+ * platform's own e-mail uses Dark Azure and Soft Blue.
+ */
+const THEME = {
+  canvas: "#f4f9fc",
+  surface: "#ffffff",
+  ink: "#003152",
+  muted: "#4f6d82",
+  line: "#dcebf3",
+  azure: "#003152",
+  softBlue: "#addff1",
+};
+// Most clients have no web fonts: Inter and Poppins only where installed, else the system font.
+const FONT = "Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+const HEADING_FONT = `Poppins,${FONT}`;
+
 interface Layout {
   subject: string;
   heading: string;
@@ -139,17 +157,17 @@ function render(data: BookingEmailData, layout: Layout, now: Date): RenderedEmai
 
   // ---- HTML (tables and inline styles: what e-mail clients understand) ----
   const e = escapeHtml;
-  const cell = "padding:8px 0;border-bottom:1px solid #e7e2db;font-size:15px;";
+  const cell = `padding:10px 0;border-bottom:1px solid ${THEME.line};font-size:15px;`;
   const detailRows = rows
     .map(
       ([label, value]) =>
-        `<tr><td style="${cell}color:#57534e;width:90px;vertical-align:top;">${e(label)}</td>` +
+        `<tr><td style="${cell}color:${THEME.muted};width:90px;vertical-align:top;">${e(label)}</td>` +
         `<td style="${cell}font-weight:600;">${e(value)}</td></tr>`,
     )
     .join("");
   const buttonHtml = link
-    ? `<p style="margin:16px 0 0;"><a href="${e(link)}" style="display:inline-block;padding:12px 20px;border-radius:10px;` +
-      `background:${color.brand};color:${color.onBrand};font-weight:600;text-decoration:none;">${e(button.label)}</a></p>`
+    ? `<p style="margin:20px 0 0;"><a href="${e(link)}" style="display:inline-block;padding:13px 26px;border-radius:999px;` +
+      `background:${color.brand};color:${color.onBrand};font-weight:500;text-decoration:none;">${e(button.label)}</a></p>`
     : "";
   const phoneHtml = phone
     ? `<br><a href="${e(telHref(phone))}" style="color:${color.ink};">${e(phone)}</a>`
@@ -158,22 +176,22 @@ function render(data: BookingEmailData, layout: Layout, now: Date): RenderedEmai
   const html = `<!doctype html>
 <html lang="sl">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${e(layout.subject)}</title></head>
-<body style="margin:0;padding:0;background:#faf8f5;color:#1c1917;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#faf8f5;"><tr><td align="center" style="padding:24px 12px;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border:1px solid #e7e2db;border-top:6px solid ${color.brand};border-radius:12px;">
-<tr><td style="padding:24px 24px 0;">
-<p style="margin:0;font-size:14px;font-weight:700;color:${color.ink};">${e(salonName)}</p>
-<h1 style="margin:8px 0 16px;font-size:22px;line-height:1.3;">${e(layout.heading)}</h1>
-<p style="margin:0 0 8px;font-size:15px;">Pozdravljeni, ${e(firstName)}!</p>
-<p style="margin:0 0 16px;font-size:15px;">${e(layout.lead)}</p>
+<body style="margin:0;padding:0;background:${THEME.canvas};color:${THEME.ink};font-family:${FONT};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${THEME.canvas};"><tr><td align="center" style="padding:24px 12px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:${THEME.surface};border:1px solid ${THEME.line};border-top:6px solid ${color.brand};border-radius:20px;">
+<tr><td style="padding:28px 24px 0;">
+<p style="margin:0;font-size:14px;font-weight:600;color:${color.ink};">${e(salonName)}</p>
+<h1 style="margin:8px 0 16px;font-family:${HEADING_FONT};font-size:24px;font-weight:600;line-height:1.25;letter-spacing:-0.02em;">${e(layout.heading)}</h1>
+<p style="margin:0 0 8px;font-size:15px;line-height:1.6;">Pozdravljeni, ${e(firstName)}!</p>
+<p style="margin:0 0 16px;font-size:15px;line-height:1.6;">${e(layout.lead)}</p>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${detailRows}</table>
-${salonNote ? `<p style="margin:16px 0 0;padding:12px;border-radius:8px;background:#faf8f5;font-size:15px;">${e(salonNote)}</p>` : ""}
-<p style="margin:16px 0 0;font-size:15px;">${e(actionText)}</p>
+${salonNote ? `<p style="margin:16px 0 0;padding:14px 16px;border-radius:12px;background:${THEME.canvas};font-size:15px;line-height:1.6;">${e(salonNote)}</p>` : ""}
+<p style="margin:16px 0 0;font-size:15px;line-height:1.6;">${e(actionText)}</p>
 ${buttonHtml}
-<p style="margin:24px 0;font-size:14px;color:#57534e;"><strong style="color:#1c1917;">${e(salonName)}</strong>${salon.address ? `<br>${e(oneLine(salon.address))}` : ""}${phoneHtml}</p>
+<p style="margin:24px 0;font-size:14px;line-height:1.6;color:${THEME.muted};"><strong style="color:${THEME.ink};">${e(salonName)}</strong>${salon.address ? `<br>${e(oneLine(salon.address))}` : ""}${phoneHtml}</p>
 </td></tr>
 </table>
-<p style="max-width:560px;margin:16px auto 0;font-size:12px;line-height:1.5;color:#57534e;">${e(footer)}</p>
+<p style="max-width:560px;margin:16px auto 0;font-size:12px;line-height:1.5;color:${THEME.muted};">${e(footer)}</p>
 </td></tr></table>
 </body>
 </html>`;
@@ -299,23 +317,25 @@ export function salonInviteEmail(data: SalonInviteData): RenderedEmail {
   const html = `<!doctype html>
 <html lang="sl">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${e(subject)}</title></head>
-<body style="margin:0;padding:0;background:#faf8f5;color:#1c1917;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#faf8f5;"><tr><td align="center" style="padding:24px 12px;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border:1px solid #e7e2db;border-top:6px solid #111111;border-radius:12px;">
-<tr><td style="padding:24px;">
-<p style="margin:0;font-size:14px;font-weight:700;">Termin</p>
-<h1 style="margin:8px 0 16px;font-size:22px;line-height:1.3;">${e(heading)}</h1>
-<p style="margin:0 0 12px;font-size:15px;">Pozdravljeni!</p>
-${paragraphs.map((p) => `<p style="margin:0 0 12px;font-size:15px;">${e(p)}</p>`).join("\n")}
-<p style="margin:16px 0 0;"><a href="${e(link)}" style="display:inline-block;padding:12px 20px;border-radius:10px;background:#111111;color:#ffffff;font-weight:600;text-decoration:none;">${e(button)}</a></p>
+<body style="margin:0;padding:0;background:${THEME.canvas};color:${THEME.ink};font-family:${FONT};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${THEME.canvas};"><tr><td align="center" style="padding:24px 12px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:${THEME.surface};border:1px solid ${THEME.line};border-radius:20px;">
+<tr><td style="padding:20px 24px;background:${THEME.azure};border-radius:19px 19px 0 0;">
+<p style="margin:0;font-family:${HEADING_FONT};font-size:24px;font-weight:600;letter-spacing:-0.02em;color:${THEME.softBlue};">Termi</p>
+</td></tr>
+<tr><td style="padding:28px 24px;">
+<h1 style="margin:0 0 16px;font-family:${HEADING_FONT};font-size:24px;font-weight:600;line-height:1.25;letter-spacing:-0.02em;">${e(heading)}</h1>
+<p style="margin:0 0 12px;font-size:15px;line-height:1.6;">Pozdravljeni!</p>
+${paragraphs.map((p) => `<p style="margin:0 0 12px;font-size:15px;line-height:1.6;">${e(p)}</p>`).join("\n")}
+<p style="margin:20px 0 0;"><a href="${e(link)}" style="display:inline-block;padding:13px 26px;border-radius:999px;background:${THEME.azure};color:#ffffff;font-weight:500;text-decoration:none;">${e(button)}</a></p>
 </td></tr>
 </table>
-<p style="max-width:560px;margin:16px auto 0;font-size:12px;line-height:1.5;color:#57534e;">${e(footer)}</p>
+<p style="max-width:560px;margin:16px auto 0;font-size:12px;line-height:1.5;color:${THEME.muted};">${e(footer)}</p>
 </td></tr></table>
 </body>
 </html>`;
 
-  return { subject: oneLine(subject, 200), html, text, fromName: "Termin", replyTo: data.replyTo ? oneLine(data.replyTo, 254) : null };
+  return { subject: oneLine(subject, 200), html, text, fromName: "Termi", replyTo: data.replyTo ? oneLine(data.replyTo, 254) : null };
 }
 
 // ---------- sending (Resend) ----------
@@ -342,7 +362,7 @@ const defaultDeps: SendDeps = {
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 };
 
-/** "Termin <obvestila@domena.si>" or "obvestila@domena.si" -> "obvestila@domena.si" */
+/** "Termi <obvestila@domena.si>" or "obvestila@domena.si" -> "obvestila@domena.si" */
 function addressOf(from: string): string | null {
   const address = (from.match(/<([^<>\s]+@[^<>\s]+)>\s*$/)?.[1] ?? from).trim();
   return /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/.test(address) ? address : null;

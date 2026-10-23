@@ -1,7 +1,8 @@
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
+import { TermiLogo } from "../_components/termi-logo";
 
 // Placeholders: change here. The signup page does not exist yet.
-const PRODUCT_NAME = "Termin";
+const PRODUCT_NAME = "Termi";
 const TRIAL_HREF = "/registracija";
 
 const audiences = [
@@ -52,19 +53,21 @@ const included = [
 ];
 
 const buttonBase =
-  "inline-flex min-h-12 items-center justify-center rounded-control px-6 font-semibold transition-colors";
+  "inline-flex min-h-12 items-center justify-center rounded-button px-7 font-medium transition-colors";
 const buttonPrimary = `${buttonBase} bg-brand text-brand-foreground hover:bg-brand-strong`;
-const buttonSecondary = `${buttonBase} border border-line bg-surface text-ink hover:border-ink-muted`;
+const buttonSoft = `${buttonBase} bg-tint text-brand hover:bg-accent`;
+/** The call to action on a Dark Azure background. */
+const buttonOnBrand = `${buttonBase} bg-accent text-brand hover:bg-tint focus-visible:outline-accent`;
 
 export default function MarketingPage() {
   return (
     <>
-      <header className="px-gutter">
-        <div className="mx-auto flex h-16 max-w-page items-center justify-between">
-          <span className="text-xl font-bold tracking-tight">{PRODUCT_NAME}</span>
+      <header className="border-b border-line bg-surface px-gutter">
+        <div className="mx-auto flex h-17 max-w-page items-center justify-between gap-4">
+          <TermiLogo className="h-7 w-auto" />
           <a
             href={TRIAL_HREF}
-            className="inline-flex min-h-11 items-center rounded-control bg-brand px-4 text-sm font-semibold text-brand-foreground transition-colors hover:bg-brand-strong"
+            className="inline-flex min-h-11 items-center rounded-button bg-brand px-5 text-sm font-medium text-brand-foreground transition-colors hover:bg-brand-strong"
           >
             Začni brezplačno
           </a>
@@ -73,25 +76,25 @@ export default function MarketingPage() {
 
       <main>
         {/* What it is */}
-        <section className="px-gutter pt-10 pb-section">
+        <section className="bg-surface px-gutter pt-12 pb-section sm:pt-16">
           <div className="mx-auto grid max-w-page items-center gap-12 lg:grid-cols-2 lg:gap-16">
-            <div>
-              <p className="mb-5 inline-block rounded-full bg-brand-soft px-3 py-1 text-sm font-medium text-brand-strong">
+            <div className="flex flex-col items-start">
+              <p className="mb-6 rounded-button bg-tint px-3.5 py-1.5 text-sm font-medium tracking-wide">
                 Spletno naročanje za salone
               </p>
-              <h1 className="text-display font-bold text-balance">
+              <h1 className="text-display font-semibold text-balance">
                 Stranke se naročijo same. Vi pa strižete.
               </h1>
-              <p className="mt-5 max-w-xl text-lead text-ink-muted">
+              <p className="mt-6 max-w-xl text-lead text-ink-muted">
                 {PRODUCT_NAME} je spletno naročanje za frizerske, kozmetične in
                 druge salone. Vsak salon dobi svojo stran za rezervacije,
                 koledar za zaposlene in opomnike po e-pošti.
               </p>
-              <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+              <div className="mt-8 flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
                 <a href={TRIAL_HREF} className={buttonPrimary}>
                   Preizkusi 14 dni brezplačno
                 </a>
-                <a href="#cenik" className={buttonSecondary}>
+                <a href="#cenik" className={buttonSoft}>
                   Poglej cenik
                 </a>
               </div>
@@ -105,9 +108,9 @@ export default function MarketingPage() {
         </section>
 
         {/* Who it is for */}
-        <section className="border-y border-line bg-surface px-gutter py-section">
+        <section className="bg-canvas px-gutter py-section">
           <div className="mx-auto max-w-page">
-            <h2 className="max-w-2xl text-title font-bold text-balance">
+            <h2 className="max-w-2xl text-title font-semibold text-balance">
               Za salone, kjer telefon zvoni med striženjem
             </h2>
             <p className="mt-4 max-w-2xl text-lead text-ink-muted">
@@ -119,7 +122,7 @@ export default function MarketingPage() {
               {audiences.map((name) => (
                 <li
                   key={name}
-                  className="rounded-full border border-line bg-canvas px-4 py-2 font-medium"
+                  className="rounded-button border border-line bg-surface px-4 py-2 font-medium"
                 >
                   {name}
                 </li>
@@ -129,18 +132,18 @@ export default function MarketingPage() {
         </section>
 
         {/* Three benefits */}
-        <section className="px-gutter py-section">
+        <section className="bg-surface px-gutter py-section">
           <div className="mx-auto max-w-page">
-            <h2 className="max-w-2xl text-title font-bold text-balance">
+            <h2 className="max-w-2xl text-title font-semibold text-balance">
               Manj dela z rezervacijami, več časa za stranke
             </h2>
-            <ul className="mt-10 grid gap-5 md:grid-cols-3">
+            <ul className="mt-10 grid gap-6 md:grid-cols-3">
               {benefits.map((benefit) => (
                 <li
                   key={benefit.title}
-                  className="rounded-card border border-line bg-surface p-6"
+                  className="rounded-card border border-line bg-canvas p-7"
                 >
-                  <span className="flex size-11 items-center justify-center rounded-control bg-brand-soft text-brand">
+                  <span className="flex size-11 items-center justify-center rounded-full bg-accent text-brand">
                     <svg
                       viewBox="0 0 24 24"
                       className="size-6"
@@ -154,7 +157,7 @@ export default function MarketingPage() {
                       {benefit.icon}
                     </svg>
                   </span>
-                  <h3 className="mt-5 text-xl font-semibold">{benefit.title}</h3>
+                  <h3 className="mt-5 text-xl font-medium">{benefit.title}</h3>
                   <p className="mt-2 text-ink-muted">{benefit.text}</p>
                 </li>
               ))}
@@ -163,44 +166,43 @@ export default function MarketingPage() {
         </section>
 
         {/* Pricing */}
-        <section
-          id="cenik"
-          className="scroll-mt-4 border-t border-line bg-surface px-gutter py-section"
-        >
+        <section id="cenik" className="scroll-mt-4 bg-canvas px-gutter py-section">
           <div className="mx-auto max-w-page">
-            <h2 className="text-title font-bold">Cenik</h2>
+            <h2 className="text-title font-semibold">Cenik</h2>
             <p className="mt-4 max-w-2xl text-lead text-ink-muted">
               Cena je odvisna samo od števila zaposlenih. Prvih 14 dni je
               brezplačnih.
             </p>
 
-            <ul className="mt-10 grid gap-5 md:grid-cols-3">
+            <ul className="mt-10 grid gap-6 md:grid-cols-3">
               {plans.map((plan) => (
                 <li
                   key={plan.name}
-                  className={`flex flex-col rounded-card border p-6 ${
+                  className={`flex flex-col rounded-card p-7 ${
                     plan.featured
-                      ? "border-brand bg-brand-soft ring-1 ring-brand"
-                      : "border-line bg-canvas"
+                      ? "bg-brand text-brand-foreground shadow-card"
+                      : "border border-line bg-surface"
                   }`}
                 >
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-xl font-semibold">{plan.name}</h3>
+                  <div className="flex items-center justify-between gap-3">
+                    <h3 className="text-xl font-medium">{plan.name}</h3>
                     {plan.featured && (
-                      <span className="rounded-full bg-brand px-3 py-1 text-xs font-semibold text-brand-foreground">
+                      <span className="rounded-button bg-accent px-3 py-1 text-xs font-medium text-brand">
                         Najpogostejši
                       </span>
                     )}
                   </div>
-                  <p className="mt-4">
-                    <span className="text-display font-bold">{plan.price} €</span>
-                    <span className="text-ink-muted"> / mesec</span>
+                  <p className="mt-5">
+                    <span className="font-heading text-5xl font-semibold tracking-tight">
+                      {plan.price} €
+                    </span>
+                    <span className={plan.featured ? "text-accent" : "text-ink-muted"}> / mesec</span>
                   </p>
-                  <p className="mt-3 font-medium">{plan.staff}</p>
-                  <p className="mt-1 text-ink-muted">{plan.text}</p>
+                  <p className="mt-4 font-medium">{plan.staff}</p>
+                  <p className={`mt-1 ${plan.featured ? "text-accent" : "text-ink-muted"}`}>{plan.text}</p>
                   <a
                     href={TRIAL_HREF}
-                    className={`mt-6 ${plan.featured ? buttonPrimary : buttonSecondary}`}
+                    className={`mt-7 ${plan.featured ? buttonOnBrand : buttonSoft}`}
                   >
                     Preizkusi brezplačno
                   </a>
@@ -208,23 +210,25 @@ export default function MarketingPage() {
               ))}
             </ul>
 
-            <div className="mt-10">
-              <h3 className="font-semibold">Vsi paketi vključujejo</h3>
-              <ul className="mt-4 grid gap-x-8 gap-y-3 sm:grid-cols-2">
+            <div className="mt-12">
+              <h3 className="text-lg font-medium">Vsi paketi vključujejo</h3>
+              <ul className="mt-5 grid gap-x-8 gap-y-3 sm:grid-cols-2">
                 {included.map((item) => (
                   <li key={item} className="flex gap-3">
-                    <svg
-                      viewBox="0 0 24 24"
-                      className="mt-0.5 size-5 shrink-0 text-success"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.25"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
-                    >
-                      <path d="m5 12.5 4.5 4.5L19 7.5" />
-                    </svg>
+                    <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-accent text-brand">
+                      <svg
+                        viewBox="0 0 24 24"
+                        className="size-4"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="m5 12.5 4.5 4.5L19 7.5" />
+                      </svg>
+                    </span>
                     <span>{item}</span>
                   </li>
                 ))}
@@ -234,32 +238,37 @@ export default function MarketingPage() {
         </section>
 
         {/* Final call to action */}
-        <section className="px-gutter py-section">
-          <div className="mx-auto max-w-page rounded-card bg-ink px-6 py-12 text-center text-canvas sm:px-12">
-            <h2 className="mx-auto max-w-2xl text-title font-bold text-balance">
-              Preizkusite {PRODUCT_NAME} v svojem salonu
-            </h2>
-            <p className="mx-auto mt-4 max-w-xl text-lead text-canvas/75">
-              14 dni brezplačno, brez kartice. Če vam ne ustreza, preprosto
-              nehate.
-            </p>
-            <a href={TRIAL_HREF} className={`mt-8 ${buttonPrimary}`}>
+        <section className="bg-brand px-gutter py-section text-brand-foreground">
+          <div className="mx-auto flex max-w-page flex-col items-start gap-8 md:flex-row md:items-center md:justify-between">
+            <div className="max-w-2xl">
+              <h2 className="text-title font-semibold text-balance">
+                Preizkusite {PRODUCT_NAME} v svojem salonu
+              </h2>
+              <p className="mt-4 text-lead text-accent">
+                14 dni brezplačno, brez kartice. Če vam ne ustreza, preprosto
+                nehate.
+              </p>
+            </div>
+            <a href={TRIAL_HREF} className={`shrink-0 ${buttonOnBrand}`}>
               Začni brezplačni preizkus
             </a>
           </div>
         </section>
       </main>
 
-      <footer className="border-t border-line px-gutter py-8 text-sm text-ink-muted">
-        <div className="mx-auto max-w-page">© {PRODUCT_NAME}</div>
+      <footer className="border-t border-line bg-surface px-gutter py-10">
+        <div className="mx-auto flex max-w-page flex-wrap items-center justify-between gap-4">
+          <TermiLogo className="h-6 w-auto" />
+          <p className="text-sm text-ink-muted">© {PRODUCT_NAME}. Vse pravice pridržane.</p>
+        </div>
       </footer>
     </>
   );
 }
 
 /**
- * Decorative preview of a salon's booking page. It sets its own --brand to
- * show that every salon gets its own color (same mechanism as in globals.css).
+ * Decorative preview of a salon's booking page, on a Dark Azure panel
+ * (Termi grafična podoba, board 4 "Aplikacija").
  */
 function BookingPreview() {
   const days = [
@@ -278,64 +287,60 @@ function BookingPreview() {
   ];
 
   return (
-    <div
-      aria-hidden="true"
-      style={{ "--brand": "#0f766e" } as CSSProperties}
-      className="mx-auto w-full max-w-sm rounded-card border border-line bg-surface p-5 shadow-card"
-    >
-      <div className="flex items-center gap-3">
-        <span className="flex size-11 items-center justify-center rounded-full bg-brand font-bold text-brand-foreground">
-          FT
-        </span>
-        <div>
-          <p className="font-semibold">Frizerstvo Test</p>
-          <p className="text-sm text-ink-muted">Izberite dan in uro</p>
-        </div>
-      </div>
-
-      <div className="mt-5 flex items-center justify-between rounded-control bg-brand-soft px-4 py-3">
-        <div>
-          <p className="font-medium">Žensko striženje</p>
-          <p className="text-sm text-ink-muted">45 min · Maja Novak</p>
-        </div>
-        <p className="font-semibold text-brand-strong">32 €</p>
-      </div>
-
-      <div className="mt-5 grid grid-cols-4 gap-2">
-        {days.map((day) => (
-          <div
-            key={day.num}
-            className={`rounded-control border py-2 text-center ${
-              day.active
-                ? "border-brand bg-brand text-brand-foreground"
-                : "border-line"
-            }`}
-          >
-            <p className="text-xs opacity-80">{day.label}</p>
-            <p className="font-semibold">{day.num}</p>
+    <div aria-hidden="true" className="mx-auto w-full max-w-md rounded-panel bg-brand p-5 sm:p-10">
+      <div className="rounded-card bg-surface p-5 shadow-card">
+        <div className="flex items-center gap-3">
+          <span className="flex size-11 items-center justify-center rounded-full bg-accent font-semibold">
+            SL
+          </span>
+          <div>
+            <p className="font-heading text-lg font-semibold">Salon Lara</p>
+            <p className="text-sm text-ink-muted">Izberite dan in uro</p>
           </div>
-        ))}
-      </div>
+        </div>
 
-      <div className="mt-3 grid grid-cols-3 gap-2">
-        {times.map((slot) => (
-          <div
-            key={slot.t}
-            className={`flex h-11 items-center justify-center rounded-control border text-sm font-medium ${
-              slot.active
-                ? "border-brand bg-brand text-brand-foreground"
-                : slot.taken
-                  ? "border-line text-ink-muted/50 line-through"
-                  : "border-brand-line text-brand-strong"
-            }`}
-          >
-            {slot.t}
+        <div className="mt-5 flex items-center justify-between rounded-control bg-canvas px-4 py-3">
+          <div>
+            <p className="font-medium">Žensko striženje</p>
+            <p className="text-sm text-ink-muted">45 min · Maja Novak</p>
           </div>
-        ))}
-      </div>
+          <p className="font-semibold">32 €</p>
+        </div>
 
-      <div className="mt-5 flex h-12 items-center justify-center rounded-control bg-brand font-semibold text-brand-foreground">
-        Potrdi termin
+        <div className="mt-5 grid grid-cols-4 gap-2">
+          {days.map((day) => (
+            <div
+              key={day.num}
+              className={`rounded-button py-2 text-center ${
+                day.active ? "bg-brand text-brand-foreground" : "bg-tint"
+              }`}
+            >
+              <p className="text-xs opacity-80">{day.label}</p>
+              <p className="font-semibold">{day.num}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          {times.map((slot) => (
+            <div
+              key={slot.t}
+              className={`flex h-11 items-center justify-center rounded-control border text-sm ${
+                slot.active
+                  ? "border-accent bg-accent font-semibold"
+                  : slot.taken
+                    ? "border-line text-ink-muted/50 line-through"
+                    : "border-line"
+              }`}
+            >
+              {slot.t}
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-5 flex h-12 items-center justify-center rounded-button bg-brand font-medium text-brand-foreground">
+          Potrdi termin
+        </div>
       </div>
     </div>
   );

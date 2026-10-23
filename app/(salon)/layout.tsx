@@ -25,12 +25,12 @@ export default async function SalonLayout({ children }: { children: React.ReactN
         <div className="mx-auto flex h-16 max-w-2xl items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
             <SalonLogo salon={salon} />
-            <span className="truncate text-lg font-bold tracking-tight">{salon.name}</span>
+            <span className="truncate text-lg font-semibold tracking-tight">{salon.name}</span>
           </div>
           {salon.phone && (
             <a
               href={`tel:${salon.phone.replace(/\s/g, "")}`}
-              className="inline-flex min-h-11 shrink-0 items-center rounded-control px-3 text-sm font-medium text-brand-ink hover:bg-brand-soft"
+              className="inline-flex min-h-11 shrink-0 items-center rounded-button px-4 text-sm font-medium text-brand-ink hover:bg-brand-soft"
             >
               {salon.phone}
             </a>

@@ -195,7 +195,7 @@ describe("salonInviteEmail (/super, a new salon's first user)", () => {
     assert.ok(email.text.includes(`Nastavite geslo: ${link}`));
     assert.ok(email.html.includes(`href="${link.replace(/&/g, "&amp;")}"`));
     assert.match(email.text, /pozabljeno-geslo in vpišite lastnica@example\.com/);
-    assert.equal(email.fromName, "Termin");
+    assert.equal(email.fromName, "Termi");
     assert.equal(email.replyTo, "platforma@example.com");
   });
 

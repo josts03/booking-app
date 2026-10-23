@@ -19,7 +19,7 @@ export function SalonLogo({ salon }: { salon: Pick<Salon, "name" | "logo_url"> }
   return (
     <span
       aria-hidden="true"
-      className="flex size-10 shrink-0 items-center justify-center rounded-full bg-brand text-sm font-bold text-brand-foreground"
+      className="flex size-10 shrink-0 items-center justify-center rounded-full bg-brand text-sm font-semibold text-brand-foreground"
     >
       {initials}
     </span>

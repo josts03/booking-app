@@ -83,7 +83,7 @@ export default async function CustomerPage({ params }: PageProps<"/admin/stranke
       <div className="flex items-center gap-4">
         <span
           aria-hidden="true"
-          className="flex size-14 shrink-0 items-center justify-center rounded-full bg-brand text-lg font-bold text-brand-foreground"
+          className="flex size-14 shrink-0 items-center justify-center rounded-full bg-brand text-lg font-semibold text-brand-foreground"
         >
           {anonymized ? "–" : `${customer.first_name[0]}${customer.last_name?.[0] ?? ""}`}
         </span>
@@ -122,7 +122,7 @@ export default async function CustomerPage({ params }: PageProps<"/admin/stranke
         {stats.map(([label, value]) => (
           <div key={label} className={`${card} p-4`}>
             <dt className="text-xs font-medium uppercase tracking-wide text-ink-muted">{label}</dt>
-            <dd className="mt-1 text-2xl font-bold tabular-nums">{value}</dd>
+            <dd className="mt-1 text-2xl font-semibold tabular-nums">{value}</dd>
           </div>
         ))}
       </dl>

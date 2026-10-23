@@ -27,7 +27,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     return (
       <div style={brandStyle(salon.brand_color)} className="flex min-h-dvh items-center bg-canvas px-gutter py-10">
         <main className="mx-auto w-full max-w-sm space-y-4 rounded-card border border-line bg-surface p-6 shadow-card">
-          <h1 className="text-xl font-bold tracking-tight">Nimate dostopa</h1>
+          <h1 className="text-xl font-semibold tracking-tight">Nimate dostopa</h1>
           <p className="text-ink-muted">
             Račun {user.email ?? ""} nima dostopa do salona {salon.name}. Odjavite se in se prijavite z drugim
             računom.
@@ -44,7 +44,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       <aside className="hidden border-r border-line bg-surface md:sticky md:top-0 md:flex md:h-dvh md:flex-col md:gap-6 md:p-4">
         <div className="flex items-center gap-3 px-1 pt-1">
           <SalonLogo salon={salon} />
-          <span className="truncate font-bold tracking-tight">{salon.name}</span>
+          <span className="truncate font-semibold tracking-tight">{salon.name}</span>
         </div>
         <AdminNav variant="side" isOwner={access.role === "owner"} />
         <div className="mt-auto space-y-2 border-t border-line px-1 pt-4">
@@ -56,7 +56,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       <div className="flex min-w-0 flex-col">
         <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-line bg-surface px-gutter md:hidden">
           <SalonLogo salon={salon} />
-          <span className="min-w-0 flex-1 truncate font-bold tracking-tight">{salon.name}</span>
+          <span className="min-w-0 flex-1 truncate font-semibold tracking-tight">{salon.name}</span>
           <SignOutButton />
         </header>
 

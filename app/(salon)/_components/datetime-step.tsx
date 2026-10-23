@@ -93,7 +93,7 @@ export async function DateTimeStep({ salon, service, staff, monthParam, dayParam
 
   return (
     <section className="space-y-6">
-      <h1 className="text-title font-bold">Izberite dan in uro</h1>
+      <h1 className="text-title font-semibold">Izberite dan in uro</h1>
 
       <div className="rounded-card border border-line bg-surface p-4">
         <div className="mb-3 flex items-center justify-between">
@@ -125,7 +125,7 @@ export async function DateTimeStep({ salon, service, staff, monthParam, dayParam
             const selected = day === selectedDay;
             const label = capitalize(format(parseISO(day), "EEEE, d. M. yyyy", { locale: sl }));
             const base =
-              "flex h-11 items-center justify-center rounded-control text-sm font-medium";
+              "flex h-11 items-center justify-center rounded-button text-sm font-medium";
             return (
               <li key={day}>
                 {free ? (
@@ -210,7 +210,7 @@ function MonthLink({
   label: string;
   children: React.ReactNode;
 }) {
-  const base = "flex size-11 items-center justify-center rounded-control text-2xl leading-none";
+  const base = "flex size-11 items-center justify-center rounded-button text-2xl leading-none";
   return href ? (
     <Link href={href} aria-label={label} className={`${base} text-ink hover:bg-brand-soft`}>
       {children}

@@ -4,6 +4,8 @@
  * DESIGN SYSTEM: the single place for colors, type, spacing and shape.
  * Components use the utilities these tokens create (bg-brand, text-ink,
  * text-title, py-section, rounded-card, ...) and never hard-code values.
+ * The values follow the Termi brand identity (Termi grafična podoba v1.0):
+ * Dark Azure + Soft Blue, Poppins for headings, Inter for text.
  *
  * PER-SALON BRAND COLOR
  * Per salon only these runtime variables change: --brand, --brand-foreground
@@ -13,11 +15,13 @@
  *
  *   <div style={brandStyle(salon.brand_color)}>
  *
- * The values below are the platform's own brand (the marketing site).
+ * The values below are the platform's own brand (marketing site, platform
+ * sign-in, /super).
  */
 :root {
-  --brand: #c2410c;
+  --brand: #003152; /* Dark Azure */
   --brand-foreground: #ffffff;
+  --brand-ink: #003152;
 }
 
 /* Tokens that reference runtime variables must be `inline`. */
@@ -26,44 +30,59 @@
   --color-brand-foreground: var(--brand-foreground);
   --color-brand-strong: color-mix(in oklab, var(--brand), black 18%);
   /* Brand color as text on light backgrounds. Salon pages set --brand-ink to a
-     contrast-checked value (lib/brand.ts); without it, a darkened --brand. */
-  --color-brand-ink: var(--brand-ink, color-mix(in oklab, var(--brand), black 25%));
+     contrast-checked value (lib/brand.ts); the platform's is on :root. */
+  --color-brand-ink: var(--brand-ink);
   --color-brand-soft: color-mix(in oklab, var(--brand), white 92%);
   --color-brand-line: color-mix(in oklab, var(--brand), white 78%);
 
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-poppins), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
 }
 
 @theme {
+  /* ---- colors: the platform's accents (Termi only, never per salon) ---- */
+  --color-accent: #addff1; /* Soft Blue: highlights on Dark Azure */
+  --color-tint: #e6f4fa; /* Sky tint: chips and soft buttons */
+
   /* ---- colors: neutrals and states ---- */
-  --color-canvas: #faf8f5; /* page background */
+  --color-canvas: #f4f9fc; /* page background (Soft bg) */
   --color-surface: #ffffff; /* cards */
-  --color-ink: #1c1917; /* main text */
-  --color-ink-muted: #57534e; /* secondary text */
-  --color-line: #e7e2db; /* borders and dividers */
+  --color-ink: #003152; /* main text */
+  --color-ink-muted: #4f6d82; /* secondary text */
+  --color-line: #dcebf3; /* borders and dividers */
   --color-success: #15803d;
   --color-danger: #b91c1c;
   --color-warning: #b45309;
 
   /* ---- typography (each size sets its own line height and tracking) ---- */
-  --text-display: clamp(2.25rem, 1.5rem + 3.6vw, 4rem);
+  --text-display: clamp(2.25rem, 1.5rem + 3.6vw, 4.5rem);
   --text-display--line-height: 1.05;
-  --text-display--letter-spacing: -0.035em;
-  --text-title: clamp(1.75rem, 1.35rem + 1.8vw, 2.5rem);
-  --text-title--line-height: 1.15;
-  --text-title--letter-spacing: -0.025em;
+  --text-display--letter-spacing: -0.02em;
+  --text-title: clamp(1.75rem, 1.35rem + 1.8vw, 3rem);
+  --text-title--line-height: 1.1;
+  --text-title--letter-spacing: -0.02em;
   --text-lead: 1.125rem;
   --text-lead--line-height: 1.6;
 
   /* ---- spacing ---- */
   --spacing-gutter: 1.25rem; /* page side padding: 20px at 375px */
-  --spacing-section: clamp(3.5rem, 2.5rem + 5vw, 6.5rem); /* vertical rhythm between sections */
+  --spacing-section: clamp(3.5rem, 2.5rem + 5vw, 7rem); /* vertical rhythm between sections */
   --container-page: 72rem; /* max-w-page */
 
   /* ---- shape ---- */
-  --radius-control: 0.75rem; /* buttons, inputs */
+  --radius-button: 999px; /* buttons and chips are pills */
+  --radius-control: 0.75rem; /* inputs, time slots, small boxes */
   --radius-card: 1.25rem;
-  --shadow-card: 0 1px 2px rgb(28 25 23 / 0.04), 0 12px 32px -8px rgb(28 25 23 / 0.12);
+  --radius-panel: 2.5rem; /* large brand panels */
+  --shadow-card: 0 1px 2px rgb(0 49 82 / 0.04), 0 12px 32px -8px rgb(0 49 82 / 0.16);
+}
+
+@layer base {
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-heading);
+  }
 }
 
 html {

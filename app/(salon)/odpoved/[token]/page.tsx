@@ -113,7 +113,7 @@ export default async function CancelPage({ params, searchParams }: PageProps<"/o
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-title font-bold">Odpoved termina</h1>
+        <h1 className="text-title font-semibold">Odpoved termina</h1>
         <p className="mt-2 text-ink-muted">
           Ali res želite odpovedati ta termin? Odpovedi ni mogoče preklicati, za nov termin se boste morali naročiti
           znova.
@@ -131,7 +131,7 @@ export default async function CancelPage({ params, searchParams }: PageProps<"/o
 function Message({ title, children }: { title: string; children?: React.ReactNode }) {
   return (
     <div className="space-y-2 text-center">
-      <h1 className="text-title font-bold">{title}</h1>
+      <h1 className="text-title font-semibold">{title}</h1>
       {children && <p className="text-ink-muted">{children}</p>}
     </div>
   );

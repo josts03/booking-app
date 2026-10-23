@@ -22,7 +22,7 @@ export default async function NewPasswordPage({ searchParams }: PageProps<"/novo
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Novo geslo</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Novo geslo</h1>
         {hasLink && <p className="mt-1 text-sm text-ink-muted">Izberite novo geslo za svoj račun.</p>}
       </div>
       {hasLink ? (
