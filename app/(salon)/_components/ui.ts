@@ -1,7 +1,7 @@
 /** Shared class strings for the salon pages. Values come from the tokens in app/globals.css. */
 
 const button =
-  "inline-flex min-h-12 items-center justify-center rounded-control px-6 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60";
+  "inline-flex min-h-12 items-center justify-center rounded-button px-7 font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60";
 
 export const buttonPrimary = `${button} bg-brand text-brand-foreground hover:bg-brand-strong`;
 export const buttonSecondary = `${button} border border-line bg-surface text-ink hover:border-ink-muted`;

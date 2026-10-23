@@ -7,7 +7,7 @@ import { buttonSecondary, card, inputClass } from "../../_components/ui";
 const NOTE_MAX = 1000; // CUSTOMER_NOTE_MAX in lib/data.ts (a client file cannot import it)
 
 const dangerButton =
-  "inline-flex min-h-11 items-center justify-center rounded-control bg-danger px-4 text-sm font-semibold text-white hover:bg-danger/90 disabled:cursor-not-allowed disabled:opacity-60";
+  "inline-flex min-h-11 items-center justify-center rounded-button bg-danger px-5 text-sm font-medium text-white hover:bg-danger/90 disabled:cursor-not-allowed disabled:opacity-60";
 
 function Message({ state }: { state: CustomerState }) {
   if (!state?.message) return null;

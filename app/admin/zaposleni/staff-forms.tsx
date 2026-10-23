@@ -231,7 +231,7 @@ export function WeekForm({ staffId, week, timezone }: { staffId: string; week: R
                         <button
                           type="button"
                           onClick={() => update(day, { windows: windows.filter((_, j) => j !== i) })}
-                          className="inline-flex size-11 shrink-0 items-center justify-center rounded-control border border-line text-lg"
+                          className="inline-flex size-11 shrink-0 items-center justify-center rounded-button border border-line text-lg"
                           aria-label={`Odstrani okno ${i + 1}`}
                         >
                           ×

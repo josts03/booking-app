@@ -87,7 +87,7 @@ export function BookingSheet({
     <SheetShell closeHref={closeHref} titleId="booking-title">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 id="booking-title" className="text-xl font-bold">
+          <h2 id="booking-title" className="text-xl font-semibold">
             {service?.name ?? "Storitev"}
           </h2>
           {service && (

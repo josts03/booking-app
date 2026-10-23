@@ -17,7 +17,7 @@ export function ServiceStep({ services }: { services: Service[] }) {
 
   return (
     <section className="space-y-6">
-      <h1 className="text-title font-bold">Izberite storitev</h1>
+      <h1 className="text-title font-semibold">Izberite storitev</h1>
 
       {services.length === 0 && (
         <p className="rounded-card border border-line bg-surface p-5 text-ink-muted">

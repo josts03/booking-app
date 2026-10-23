@@ -84,7 +84,7 @@ export default async function StaffPage() {
                 />
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                    <h2 className="text-lg font-bold">{member.name}</h2>
+                    <h2 className="text-lg font-semibold">{member.name}</h2>
                     {!member.is_active && (
                       <span className="rounded-full bg-line px-2.5 py-0.5 text-xs font-semibold text-ink-muted">
                         Neaktiven

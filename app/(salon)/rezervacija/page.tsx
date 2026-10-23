@@ -128,7 +128,7 @@ export default async function BookingPage({ searchParams }: PageProps<"/rezervac
       )}
       {step === 4 && service && staffParam && time && (
         <section className="space-y-4">
-          <h1 className="text-title font-bold">Vaši podatki</h1>
+          <h1 className="text-title font-semibold">Vaši podatki</h1>
           <BookingForm
             service={service.id}
             staff={staffParam}

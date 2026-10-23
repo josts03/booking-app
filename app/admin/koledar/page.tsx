@@ -194,9 +194,9 @@ export default async function CalendarPage({ searchParams }: PageProps<"/admin/k
       ? capitalize(format(parseISO(date), "EEEE, d. M. yyyy", { locale: sl }))
       : `${format(monday, "d. M.")} – ${format(addDays(monday, 6), "d. M. yyyy")}`;
 
-  const navButton = "inline-flex size-11 items-center justify-center rounded-control border border-line bg-surface text-xl leading-none hover:border-ink-muted";
+  const navButton = "inline-flex size-11 items-center justify-center rounded-button border border-line bg-surface text-xl leading-none hover:border-ink-muted";
   const chip = (active: boolean) =>
-    `inline-flex min-h-11 shrink-0 items-center gap-2 rounded-full border px-4 text-sm font-medium ${
+    `inline-flex min-h-11 shrink-0 items-center gap-2 rounded-button border px-4 text-sm font-medium ${
       active ? "border-ink bg-ink text-canvas" : "border-line bg-surface hover:border-ink-muted"
     }`;
 
@@ -222,7 +222,7 @@ export default async function CalendarPage({ searchParams }: PageProps<"/admin/k
           </Link>
         </div>
 
-        <div className="ml-auto flex overflow-hidden rounded-control border border-line bg-surface text-sm font-semibold" role="group" aria-label="Pogled">
+        <div className="ml-auto flex overflow-hidden rounded-button border border-line bg-surface text-sm font-medium" role="group" aria-label="Pogled">
           {(["day", "week"] as const).map((option) => (
             <Link
               key={option}

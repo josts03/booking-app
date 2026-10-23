@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { brandStyle } from "@/lib/brand";
 import { getSuperAccess } from "@/lib/super-access";
 import { signOutAction } from "../(auth)/actions";
 import { buttonSecondary } from "../admin/_components/ui";
+import { TermiLogo } from "../_components/termi-logo";
 
 export const metadata: Metadata = {
   title: "Nadzorna plošča",
@@ -25,11 +25,11 @@ export default async function SuperLayout({ children }: { children: React.ReactN
   }
 
   return (
-    <div style={brandStyle(null)} className="min-h-dvh bg-canvas">
+    <div className="min-h-dvh bg-canvas">
       <header className="sticky top-0 z-30 border-b border-line bg-surface">
         <div className="mx-auto flex h-14 max-w-5xl items-center gap-3 px-gutter md:px-8">
-          <Link href="/super" className="font-bold tracking-tight">
-            Termin
+          <Link href="/super" className="inline-flex min-h-11 shrink-0 items-center">
+            <TermiLogo className="h-6 w-auto" />
           </Link>
           <span className="min-w-0 flex-1 truncate text-sm text-ink-muted">Nadzorna plošča</span>
           {access.user.email && (

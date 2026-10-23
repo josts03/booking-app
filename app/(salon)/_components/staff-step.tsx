@@ -19,7 +19,7 @@ export function StaffStep({ serviceId, staff }: { serviceId: string; staff: Staf
   if (staff.length === 0) {
     return (
       <section className="space-y-4">
-        <h1 className="text-title font-bold">Izberite zaposlenega</h1>
+        <h1 className="text-title font-semibold">Izberite zaposlenega</h1>
         <p className="rounded-card border border-line bg-surface p-5 text-ink-muted">
           Te storitve trenutno ni mogoče naročiti prek spleta. Izberite drugo storitev ali pokličite
           salon.
@@ -30,7 +30,7 @@ export function StaffStep({ serviceId, staff }: { serviceId: string; staff: Staf
 
   return (
     <section className="space-y-4">
-      <h1 className="text-title font-bold">Izberite zaposlenega</h1>
+      <h1 className="text-title font-semibold">Izberite zaposlenega</h1>
       <ul className="space-y-3">
         <li>
           <Link href={flowHref({ service: serviceId, staff: "any" })} className={choiceCard}>

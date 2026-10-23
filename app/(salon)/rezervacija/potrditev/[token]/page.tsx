@@ -72,7 +72,7 @@ export default async function ConfirmationPage({
             <path d="m5 12.5 4.5 4.5L19 7.5" />
           </svg>
         </span>
-        <h1 className="mt-4 text-title font-bold">{title}</h1>
+        <h1 className="mt-4 text-title font-semibold">{title}</h1>
         {pending && (
           <p className="mt-2 text-ink-muted">Salon vam bo termin še potrdil.</p>
         )}

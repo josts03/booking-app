@@ -28,7 +28,7 @@ interface Props {
 }
 
 const dangerButton =
-  "inline-flex min-h-11 items-center justify-center rounded-control bg-danger px-4 text-sm font-semibold text-white hover:bg-danger/90 disabled:cursor-not-allowed disabled:opacity-60";
+  "inline-flex min-h-11 items-center justify-center rounded-button bg-danger px-5 text-sm font-medium text-white hover:bg-danger/90 disabled:cursor-not-allowed disabled:opacity-60";
 
 function Message({ state }: { state: BookingActionState }) {
   if (!state?.message) return null;
